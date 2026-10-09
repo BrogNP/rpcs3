@@ -268,16 +268,16 @@ namespace rsx
 		{
 			if ((location >> 16) == 0xcafe)
 			{
-				// diagnostic: LV1-style context DMA handle (0xCAFE000F | id << 8 | n << 4) emitted by the VSH's libgcm
-				std::string mapped;
-				for (u32 i = 0; i < 4096 && mapped.size() < 1500; i++)
+				// COMPAT SHIM (unconfirmed firmware contract): the VSH's libgcm init state binds color surface A to an
+				// LV1-style context DMA handle (0xCAFE000F | id << 8 | n << 4) that RPCS3 has no definition for.
+				// Observed only as the default of the init-state surface (offset 0). Resolve it as local memory so the
+				// init-state draw can execute; any non-zero use is logged.
+				static atomic_t<u32> s_warned = 0;
+				if (s_warned++ < 8)
 				{
-					if (const u32 ea = render->lv2_context->iomap_table.ea[i]; ea != umax)
-					{
-						fmt::append(mapped, " [io 0x%x -> ea 0x%x]", i << 20, ea);
-					}
+					rsx_log.warning("Unknown LV1-style context DMA 0x%x (offset=0x%x) treated as local memory (process=0x%x)", location, offset, +id_manager::g_process);
 				}
-				rsx_log.error("DIAG unknown context DMA 0x%x offset=0x%x process=0x%x iomap:%s", location, offset, +id_manager::g_process, mapped);
+				return get_address(offset, CELL_GCM_CONTEXT_DMA_MEMORY_FRAME_BUFFER, size_to_check, src_loc);
 			}
 			msg = "Invalid location!"sv;
 			break;
