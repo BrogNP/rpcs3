@@ -251,7 +251,8 @@ error_code create_lv2_shm(bool pshared, u64 ipc_key, u64 size, u32 align, u64 fl
 		}
 		else
 		{
-			creation_policy = SYS_SYNC_NOT_PROCESS_SHARED;
+			// Reference an existing object only (ie. cellAudioInit opening the MIO key created by VSH)
+			creation_policy = SYS_SYNC_NOT_CREATE;
 		}
 	}
 
