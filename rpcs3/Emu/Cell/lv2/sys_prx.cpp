@@ -209,7 +209,10 @@ static error_code prx_load_module(const std::string& vpath, u64 flags, vm::ptr<s
 
 	if (is_firmware_sprx)
 	{
-		if (Emu.IsVsh() || Emu.GetDir().starts_with("/dev_flash/"))
+		// Per-process: games spawned by VSH must keep using HLE (Emu.GetDir() is the boot path, which stays "/dev_flash/" for them too)
+		const auto process = idm::get_unlocked<lv2_obj, lv2_process>(id_manager::g_process);
+
+		if (Emu.IsVsh() || (process && process->ELF_file_path.starts_with("/dev_flash/")))
 		{
 			// No HLE at all with in VSH
 			ignore = false;
