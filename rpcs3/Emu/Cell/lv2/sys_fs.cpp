@@ -134,8 +134,12 @@ bool has_fs_write_rights(std::string_view vpath)
 	if (dev_root.starts_with("dev_flash"sv))
 		return has_root_perm;
 
+	// Raw device nodes (ie. VSH formatting "/dev_hdd1" as SIMPLEFS) have no device root in their parent path
+	if (dev_root.empty())
+		return has_root_perm;
+
 	// Technically should not reach here, but handle it anyways
-	if (dev_root == "dev_bdvd"sv || dev_root == "dev_ps2disc"sv || dev_root.empty())
+	if (dev_root == "dev_bdvd"sv || dev_root == "dev_ps2disc"sv)
 		return false;
 
 	return true;
