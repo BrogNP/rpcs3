@@ -2190,8 +2190,9 @@ error_code sys_net_bnet_sysctl(ppu_thread& ppu, u32 arg1, u32 arg2, u32 arg3, vm
 	if (arg1 && arg2 == 6)
 	{
 		const auto mib = vm::_ptr<const be_t<s32>>(arg1);
+		sys_net.notice("sys_net_bnet_sysctl(): mib = {%d, %d, %d, %d, %d, %d} oldp=0x%x oldlenp=%u", mib[0], mib[1], mib[2], mib[3], mib[4], mib[5], arg3, arg4 ? +*vm::static_ptr_cast<be_t<u32>>(arg4) : 0u);
 
-		if (mib[0] == 4 /* CTL_NET */ && mib[1] == 17 /* PF_ROUTE */ && mib[4] == 3 /* NET_RT_IFLIST */)
+		if (mib[0] == 4 /* CTL_NET */ && mib[1] == 17 /* PF_ROUTE */ && mib[4] == 4 /* NET_RT_IFLIST (NetBSD numbering: 3 is the old format) */)
 		{
 			const std::vector<u8> data = net_build_iflist();
 			const auto oldlenp = vm::static_ptr_cast<be_t<u32>>(arg4);
