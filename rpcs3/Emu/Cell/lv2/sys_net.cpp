@@ -7,6 +7,7 @@
 #include "Utilities/Thread.h"
 
 #include "sys_sync.h"
+#include "sys_event.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -1898,6 +1899,8 @@ static void net_write_sockinfo(s32 s, lv2_socket& sock, sys_net_sockinfo_t& info
 	sys_net.trace("sys_net_infoctl(cmd=6): %s", info);
 }
 
+static bool net_virtual_link_up();
+
 error_code sys_net_infoctl(ppu_thread& ppu, s32 cmd, vm::ptr<void> arg)
 {
 	ppu.state += cpu_flag::wait;
@@ -1985,6 +1988,33 @@ error_code sys_net_infoctl(ppu_thread& ppu, s32 cmd, vm::ptr<void> arg)
 		vm::ptr<net_infoctl_cmd_9_t> cmd_arg = vm::static_ptr_cast<net_infoctl_cmd_9_t>(arg);
 		cmd_arg->zero = 0;
 		std::memcpy(cmd_arg->server_name.get_ptr(), nameserver.c_str(), nameserver.size() + 1);
+		break;
+	}
+	case 55:
+	{
+		// libnetctl registers the event queue on which the kernel reports link events (netctl_main, event mask 0x20 in data1).
+		// Events as consumed by the firmware (FUN_00329140 in vsh.elf): data1 = 0x20, data2 = 4 (link up) with data3 = active media
+		// bitmask (see sys_net_control 0x80020001), or data2 = 8 (link down). The firmware waits for such an event in its IP
+		// obtaining state, otherwise it never leaves it and reports "no ethernet cable".
+		if (!arg)
+		{
+			return -SYS_NET_EINVAL;
+		}
+
+		const auto words = vm::_ptr<be_t<u32>>(arg.addr());
+		sys_net.notice("sys_net_infoctl(cmd=55): arg=%s", fmt::buf_to_hexstring(vm::_ptr<u8>(arg.addr()), 32));
+
+		for (u32 i = 0; i < 8; i++)
+		{
+			if (const auto queue = idm::get_unlocked<lv2_obj, lv2_event_queue>(words[i]))
+			{
+				const bool up = net_virtual_link_up();
+				sys_net.notice("sys_net_infoctl(cmd=55): queue 0x%x (arg word %u) <- link %s event", +words[i], i, up ? "up" : "down");
+				queue->send(0, 0x20, up ? 4 : 8, up ? 0x8 : 0);
+				break;
+			}
+		}
+
 		break;
 	}
 	default: break;
