@@ -1333,13 +1333,16 @@ extern void ppu_execute_syscall(ppu_thread& ppu, u64 code)
 			if (trace_vsh)
 			{
 				const std::string name = ppu_get_syscall_name(code);
+				const std::string thread_name = ppu.get_name();
 
-				// Skip the very noisy ones
-				if (name != "sys_mutex_lock" && name != "sys_mutex_unlock" && name != "sys_timer_usleep" && name != "sys_ppu_thread_yield" &&
-					name != "sys_memory_get_page_attribute" && name != "sys_hid_manager_read" && name != "sys_hid_manager_ioctl" && name != "sys_cond_signal" &&
-					name != "sys_rwlock_rlock" && name != "sys_rwlock_runlock" && name != "sys_time_get_system_time" && name != "sys_time_get_current_time")
+				// Only the threads that take part in the sysutil handshake (synchronization primitives included, that is how it is done)
+				const bool important_thread = thread_name.find("main_thread") != umax || thread_name.find("SceVshSysutil") != umax;
+
+				if (name != "sys_timer_usleep" && name != "sys_ppu_thread_yield" && name != "sys_memory_get_page_attribute" &&
+					name != "sys_hid_manager_read" && name != "sys_hid_manager_ioctl" && name != "sys_time_get_system_time" && name != "sys_time_get_current_time" &&
+					important_thread)
 				{
-					ppu_log.success("%s syscall %s(0x%llx, 0x%llx, 0x%llx, 0x%llx) -> 0x%llx [thread %s]", id_manager::g_process == lv2_process::id_base ? "VSH" : "GAME", name, args[0], args[1], args[2], args[3], ppu.gpr[3], ppu.get_name());
+					ppu_log.success("%s syscall %s(0x%llx, 0x%llx, 0x%llx, 0x%llx) -> 0x%llx [thread %s]", id_manager::g_process == lv2_process::id_base ? "VSH" : "GAME", name, args[0], args[1], args[2], args[3], ppu.gpr[3], thread_name);
 				}
 			}
 
