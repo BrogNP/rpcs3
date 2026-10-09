@@ -27,6 +27,7 @@
 #include "Emu/RSX/Overlays/HomeMenu/overlay_home_menu.h"
 #include "Emu/RSX/Overlays/overlay_message.h"
 #include "Emu/Cell/lv2/sys_usbd.h"
+#include "Emu/Cell/lv2/sys_process.h"
 #include "Emu/Cell/Modules/cellGem.h"
 #include "Emu/Cell/timers.hpp"
 #include "Utilities/Thread.h"
@@ -692,7 +693,11 @@ void pad_thread::operator()()
 			// Make sure we call this function only once per button press
 			if ((ps_button_pressed && !m_ps_button_pressed) || pad::g_home_menu_requested.exchange(false))
 			{
-				open_home_menu();
+				// With a game running under VSH, this swaps the screen and the pad between the game and the XMB
+				if (!vsh_focus::toggle())
+				{
+					open_home_menu();
+				}
 			}
 
 			m_ps_button_pressed = ps_button_pressed;

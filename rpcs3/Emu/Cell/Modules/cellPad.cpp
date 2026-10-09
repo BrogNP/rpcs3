@@ -359,7 +359,7 @@ extern void pad_get_data(u32 port_no, CellPadData* data, bool get_periph_data = 
 	const auto& pad = handler->GetPads()[port_no];
 	const PadInfo& rinfo = handler->GetInfo();
 
-	if (rinfo.system_info & CELL_PAD_INFO_INTERCEPTED)
+	if (rinfo.system_info & CELL_PAD_INFO_INTERCEPTED || vsh_focus::foreground_process() != id_manager::g_process)
 	{
 		data->len = CELL_PAD_LEN_NO_CHANGE;
 		return;

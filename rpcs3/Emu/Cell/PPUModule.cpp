@@ -2434,6 +2434,13 @@ shared_ptr<lv2_process> ppu_load_self(const ppu_exec_object& elf, shared_ptr<lv2
 	const std::string elf_path = argv0[0];
 	process_ptr->ELF_file_path = elf_path;
 
+	if (!ar && id_manager::g_process != lv2_process::id_base && !elf_path.starts_with("/dev_flash/"))
+	{
+		// A game started by VSH takes the screen and the pad
+		vsh_focus::g_game_process = id_manager::g_process;
+		vsh_focus::g_vsh_in_front = false;
+	}
+
 	if (!lv2_paramsfo.empty())
 	{
 		std::string title_id;

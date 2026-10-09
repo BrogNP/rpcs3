@@ -207,6 +207,19 @@ namespace vm
 enum CellError : u32;
 CellError process_is_spu_lock_line_reservation_address(u32 addr, u64 flags);
 
+// Which process owns the screen and the pad while a game runs under VSH
+namespace vsh_focus
+{
+	extern atomic_t<u32> g_game_process; // umax if there is none
+	extern atomic_t<bool> g_vsh_in_front;
+
+	// Process that currently gets the display and pad input
+	u32 foreground_process();
+
+	// Flip between VSH and the game. Returns false if no game is running under VSH
+	bool toggle();
+}
+
 // SysCalls
 s32 sys_process_getpid();
 s32 sys_process_getppid();

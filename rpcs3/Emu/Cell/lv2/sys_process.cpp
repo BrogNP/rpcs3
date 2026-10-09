@@ -991,6 +991,31 @@ error_code sys_process_detach_child(ppu_thread& ppu, u32 pid)
 
 extern void signal_system_cache_can_stay();
 
+namespace vsh_focus
+{
+	atomic_t<u32> g_game_process{umax};
+	atomic_t<bool> g_vsh_in_front{false};
+
+	u32 foreground_process()
+	{
+		const u32 game = g_game_process;
+		return game == umax || g_vsh_in_front ? lv2_process::id_base : game;
+	}
+
+	bool toggle()
+	{
+		if (g_game_process == umax)
+		{
+			return false;
+		}
+
+		const bool vsh_in_front = !g_vsh_in_front.load();
+		g_vsh_in_front = vsh_in_front;
+		sys_process.success("Foreground process: %s", vsh_in_front ? "VSH" : "game");
+		return true;
+	}
+}
+
 
 
 void _sys_process_exit(ppu_thread& ppu, s32 status, u32 arg2, u32 arg3)
@@ -1000,6 +1025,12 @@ void _sys_process_exit(ppu_thread& ppu, s32 status, u32 arg2, u32 arg3)
 	if (id_manager::g_process != lv2_process::id_base)
 	{
 		sys_process.success("Sub-process 0x%x terminated!", id_manager::g_process);
+
+		if (vsh_focus::g_game_process == id_manager::g_process)
+		{
+			vsh_focus::g_game_process = u32{umax};
+			vsh_focus::g_vsh_in_front = false;
+		}
 	}
 
 	sys_process.success("_sys_process_exit(status=%d, arg2=0x%x, arg3=0x%x)", status, arg2, arg3);

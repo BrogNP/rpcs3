@@ -1061,8 +1061,23 @@ namespace rsx
 			fifo_ctrl->sync_get();
 		}
 
+		const u32 foreground = vsh_focus::foreground_process();
+
+		bool foreground_found = false;
+
+		idm::select<lv2_rsx_context>([&](u32, u32 proc, lv2_rsx_context& context)
+		{
+			foreground_found |= proc == foreground && !!context.inited;
+		});
+
 		idm::select<lv2_rsx_context>([&](u32 id, u32 proc, lv2_rsx_context& context)
 		{
+			// Only the foreground process may take the screen (if it has a context)
+			if (foreground_found && proc != foreground)
+			{
+				return;
+			}
+
 			if (lv2_context != &context && !!context.inited)
 			{
 				changed = true;
