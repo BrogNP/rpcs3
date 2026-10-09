@@ -74,7 +74,7 @@ namespace rsx
 
 		if (!RSX(ctx)->isHLE)
 		{
-			sys_rsx_context_attribute(0x55555555, 0xFEF, 0, arg, 0, 0);
+			sys_rsx_context_attribute(RSX(ctx)->lv2_context_id, 0xFEF, 0, arg, 0, 0);
 			return;
 		}
 
