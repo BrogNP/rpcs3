@@ -1176,6 +1176,19 @@ namespace rsx
 			const auto c = lv2_context;
 			rsx_log.warning("DIAG heartbeat: rsx loop last ran %llums ago, context=0x%x get=0x%x put=0x%x state=0x%x irq_mask=0x%x", age_ms, lv2_context_id, c && ctrl ? +ctrl->get : 0u, c && ctrl ? +ctrl->put : 0u, +state.load(), +m_eng_interrupt_mask.load());
 
+			if (static u32 s_ctx_dumps = 0; s_ctx_dumps++ < 4)
+			{
+				idm::select<lv2_rsx_context>([&](u32 id, u32 proc, lv2_rsx_context& ctx)
+				{
+					if (!ctx.inited) return;
+					std::string bufs;
+					for (u32 b = 0; b < ctx.display_buffers_count && b < 8; b++)
+						fmt::append(bufs, " #%u{off=0x%x pitch=%u %ux%u}", b, +ctx.display_buffers[b].offset, +ctx.display_buffers[b].pitch, +ctx.display_buffers[b].width, +ctx.display_buffers[b].height);
+					const auto& r = *ctx.method_regs;
+					rsx_log.warning("DIAG ctx 0x%x process=0x%x cur_disp=%u bufs=%u:%s | surfA off=0x%x pitch=%u dma=0x%x clip=%ux%u target=%u fmt=%u", id, proc, +ctx.current_display_buffer, ctx.display_buffers_count, bufs, r.surface_offset(0), r.surface_pitch(0), r.surface_dma(0), r.surface_clip_width(), r.surface_clip_height(), static_cast<u32>(r.surface_color_target()), static_cast<u32>(r.surface_color()));
+				});
+			}
+
 			std::string hist;
 			for (int n = 0; n < 12; n++)
 			{
