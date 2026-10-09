@@ -1325,7 +1325,7 @@ extern void ppu_execute_syscall(ppu_thread& ppu, u64 code)
 		if (const auto func = g_ppu_syscall_table[code].first)
 		{
 			const u64 trace_until = g_vsh_syscall_trace_until;
-			const bool trace_vsh = trace_until && id_manager::g_process == lv2_process::id_base && get_system_time() < trace_until;
+			const bool trace_vsh = trace_until && get_system_time() < trace_until;
 			const std::array<u64, 4> args{ppu.gpr[3], ppu.gpr[4], ppu.gpr[5], ppu.gpr[6]};
 
 			func(ppu, {}, vm::_ptr<u32>(ppu.cia), nullptr);
@@ -1336,9 +1336,10 @@ extern void ppu_execute_syscall(ppu_thread& ppu, u64 code)
 
 				// Skip the very noisy ones
 				if (name != "sys_mutex_lock" && name != "sys_mutex_unlock" && name != "sys_timer_usleep" && name != "sys_ppu_thread_yield" &&
-					name != "sys_memory_get_page_attribute" && name != "sys_hid_manager_read" && name != "sys_hid_manager_ioctl" && name != "sys_cond_signal")
+					name != "sys_memory_get_page_attribute" && name != "sys_hid_manager_read" && name != "sys_hid_manager_ioctl" && name != "sys_cond_signal" &&
+					name != "sys_rwlock_rlock" && name != "sys_rwlock_runlock" && name != "sys_time_get_system_time" && name != "sys_time_get_current_time")
 				{
-					ppu_log.success("VSH syscall %s(0x%llx, 0x%llx, 0x%llx, 0x%llx) -> 0x%llx [thread %s]", name, args[0], args[1], args[2], args[3], ppu.gpr[3], ppu.get_name());
+					ppu_log.success("%s syscall %s(0x%llx, 0x%llx, 0x%llx, 0x%llx) -> 0x%llx [thread %s]", id_manager::g_process == lv2_process::id_base ? "VSH" : "GAME", name, args[0], args[1], args[2], args[3], ppu.gpr[3], ppu.get_name());
 				}
 			}
 
