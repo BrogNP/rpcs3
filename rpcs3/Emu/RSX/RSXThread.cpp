@@ -1188,7 +1188,7 @@ namespace rsx
 			// Rarely executed methods (flips, labels, user commands, display) are the interesting ones
 			std::string rare;
 			int rare_n = 0;
-			for (u32 r = 1; r < 0x4000 && rare_n < 60; r++)
+			for (u32 r = 0x400; r < 0x4000 && rare_n < 90; r++)
 			{
 				if (g_diag_method_hist[r] > 0 && g_diag_method_hist[r] <= 300 && !(r >= 0x4000 / 4 && r < 0x4000 / 4)) { fmt::append(rare, " [0x%x]=%u", r << 2, g_diag_method_hist[r]); rare_n++; }
 			}
