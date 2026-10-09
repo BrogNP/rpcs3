@@ -217,6 +217,11 @@ static error_code prx_load_module(const std::string& vpath, u64 flags, vm::ptr<s
 			// No HLE at all with in VSH
 			ignore = false;
 		}
+		else if (name == "libsysutil.sprx" && Emu.IsVshControlled())
+		{
+			// Games under VSH use HLE sysutil: the LLE one waits on VSH-private shared objects (ie. "_s__shm" mutex) that nobody creates
+			ignore = true;
+		}
 		else if (g_cfg.core.libraries_control.get_set().count(name + ":lle"))
 		{
 			// Force LLE
