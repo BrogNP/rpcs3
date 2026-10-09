@@ -1249,6 +1249,15 @@ namespace rsx
 				id_manager::g_id = id;
 				const auto acquired = lv2_process::acquire_globals(process);
 				sys_rsx_context_attribute(id, 0xFED, 1, get_guest_system_time(post_event_time), 0, 0);
+
+				if (process == 0x1000000 && vblank_count % 300 == 0 && vm::check_addr(0x729c38, vm::page_readable, 0x1070))
+				{
+					// diagnostic: firmware netctl state (netctl_main in vsh.elf): DAT_00729c38 is its context, +0x10/+0x14 state machine, +0x798 error, +0x7a4 flags
+					const u32 base = 0x729c38;
+					rsx_log.warning("DIAG netctl: inited=%u state(0x729c48)=%u sm_prev=%u sm_cur=%u error=0x%x flags=0x%x link/media(+0xf6c)=%u mac=%02x:%02x:%02x:%02x:%02x:%02x",
+						+vm::read32(0x729c2c), +vm::read32(0x729c48), +vm::read32(base + 0x10), +vm::read32(base + 0x14), +vm::read32(base + 0x798), +vm::read32(base + 0x7a4), +vm::read32(base + 0xf6c),
+						+vm::read8(base + 0x1028), +vm::read8(base + 0x1029), +vm::read8(base + 0x102a), +vm::read8(base + 0x102b), +vm::read8(base + 0x102c), +vm::read8(base + 0x102d));
+				}
 			}
 
 			// Restore
