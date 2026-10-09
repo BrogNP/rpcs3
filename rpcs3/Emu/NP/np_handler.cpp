@@ -700,6 +700,16 @@ namespace np
 		return false;
 	}
 
+	std::array<u8, 6> np_handler::get_or_discover_ether_addr()
+	{
+		if (ether_address == std::array<u8, 6>{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF})
+		{
+			discover_ether_address();
+		}
+
+		return ether_address;
+	}
+
 	const std::array<u8, 6>& np_handler::get_ether_addr() const
 	{
 		return ether_address;

@@ -2,6 +2,7 @@
 #include "sys_net.h"
 
 #include "Emu/IdManager.h"
+#include "Emu/system_config.h"
 #include "Emu/Cell/PPUThread.h"
 #include "Utilities/Thread.h"
 
@@ -1992,15 +1993,38 @@ error_code sys_net_infoctl(ppu_thread& ppu, s32 cmd, vm::ptr<void> arg)
 	return CELL_OK;
 }
 
+// The firmware's netctl (netctl_main, statically linked in the VSH, FreeBSD-derived libnet) decides about the physical link through
+// the interface ioctls and sys_net_control. Everything below follows the call sites in the firmware (see docs in the comments):
+//  - SIOCGIFFLAGS (_IOWR('i', 17, ifreq)): ifr_flags is a be16 at ifreq+16
+//  - 'i' 140 (_IOWR, 32 bytes): get link-layer (MAC) address of the interface, sockaddr at ifreq+16, address bytes at ifreq+18
+//  - sys_net_control(ifname, 0x80020001, u32*, 4): active media of the link as a bitmask (0 = no link / unknown):
+//      0x1 10BASE half, 0x2 10BASE full, 0x4 100BASE half, 0x8 100BASE full, 0x10 1000BASE half, 0x20 1000BASE full
+//    netctl maps it to CELL_NET_CTL_LINK_TYPE_*; anything else is reported as "no ethernet cable connected"
+static bool net_virtual_link_up()
+{
+	return g_cfg.net.net_active == np_internet_status::enabled;
+}
+
 error_code sys_net_control(ppu_thread& ppu, u32 arg1, s32 arg2, vm::ptr<void> arg3, s32 arg4)
 {
 	ppu.state += cpu_flag::wait;
 
 	sys_net.todo("sys_net_control(0x%x, %d, *0x%x, %d)", arg1, arg2, arg3, arg4);
 
-	// EXPERIMENT: VSH's network status screen calls this expecting a small output value
-	// (arg4 is the expected size, seen as 4 bytes). Report "connected" (1) instead of
-	// leaving the buffer untouched, which reads as zero/garbage to VSH.
+	if (static_cast<u32>(arg2) == 0x80020001u)
+	{
+		// Active media of the interface
+		if (arg3 && arg4 == 4)
+		{
+			// Same link type the HLE cellNetCtl reports (100BASE full duplex)
+			*vm::_ptr<be_t<u32>>(arg3.addr()) = net_virtual_link_up() ? 0x8 : 0x0;
+			sys_net.notice("sys_net_control(): reporting link media 0x%x for interface \"%s\"", *vm::_ptr<be_t<u32>>(arg3.addr()), arg1 ? vm::_ptr<const char>(arg1) : "");
+		}
+
+		return CELL_OK;
+	}
+
+	// EXPERIMENT (kept from earlier work): other 4-byte queries (seen: 0x80080005) are answered with 1 until their meaning is known
 	if (arg3 && arg4 == 4)
 	{
 		sys_net.todo("sys_net_control(): faking connected status for cmd=0x%x", arg2);
@@ -2022,30 +2046,33 @@ error_code sys_net_bnet_ioctl(ppu_thread& ppu, s32 arg1, u32 arg2, u32 arg3)
 	const u32 io_num   = arg2 & 0xff;
 	const bool io_out  = (arg2 & 0x40000000) != 0;
 
-	// DIAGNOSTIC: dump whatever VSH gave us on the network-interface group before we touch it,
-	// so we can see what fields it's actually sending (interface name/id etc.) instead of guessing blind.
-	if (arg3 && io_group == 'i' && io_size > 0 && io_size <= 528)
+	if (arg3 && io_group == 'i' && io_size >= 32)
 	{
-		sys_net.todo("sys_net_bnet_ioctl(): group='i' cmd=%d size=%d in_data=%s", io_num, io_size, fmt::buf_to_hexstring(vm::_ptr<u8>(arg3), io_size));
-	}
+		const auto ifr = vm::_ptr<u8>(arg3);
+		const std::string name(reinterpret_cast<const char*>(ifr), strnlen(reinterpret_cast<const char*>(ifr), 16));
+		const bool is_lo = name.starts_with("lo");
 
-	// VSH's network status screen queries group 'i' (interface), commands 17 and 140 are both
-	// IN+OUT (VSH reads our response) - command 16 is IN-only (VSH writes to us, nothing to fill).
-	// Confirmed via hex dump: bytes 0-15 are the interface name ("eth0"/"lo0") VSH sent as input -
-	// likely echoed/validated by VSH, so it must be preserved, not overwritten like the first attempt did.
-	// Likely SIOCGIFMEDIA-equivalent (physical link state) - bytes 16-31 are the actual status fields,
-	// struct layout still unconfirmed - guessing BSD ifmediareq-style [current, mask, status, active].
-	// EXPERIMENT #2: keep the name intact, only fill the trailing status words with a plausible "active" pattern.
-	if (arg3 && io_out && io_group == 'i' && (io_num == 17 || io_num == 140) && io_size == 32)
-	{
-		sys_net.todo("sys_net_bnet_ioctl(): faking active link state for cmd=%d, size=%d", io_num, io_size);
+		if (io_out && io_num == 17)
+		{
+			// SIOCGIFFLAGS: IFF_UP | IFF_BROADCAST | IFF_RUNNING | IFF_SIMPLEX | IFF_MULTICAST (running only with link)
+			// (loopback: IFF_UP | IFF_LOOPBACK | IFF_RUNNING | IFF_MULTICAST)
+			u16 flags = is_lo ? 0x8049 : 0x8803;
 
-		const auto words = vm::_ptr<u32>(arg3 + 16);
+			if (!is_lo && net_virtual_link_up())
+			{
+				flags |= 0x40;
+			}
 
-		words[0] = 0x00000010; // ifm_current (guess: nonzero media type)
-		words[1] = 0x00000000; // ifm_mask
-		words[2] = 0x00000003; // ifm_status  (guess: IFM_AVALID | IFM_ACTIVE)
-		words[3] = 0x00000010; // ifm_active  (mirrors current)
+			*reinterpret_cast<be_t<u16>*>(ifr + 16) = flags;
+		}
+		else if (io_out && io_num == 140 && !is_lo)
+		{
+			// Link-layer address of the interface
+			const auto mac = g_fxo->get<named_thread<np::np_handler>>().get_or_discover_ether_addr();
+			ifr[16] = 8; // sa_len
+			ifr[17] = 18; // AF_LINK
+			std::memcpy(ifr + 18, mac.data(), 6);
+		}
 	}
 
 	return CELL_OK;
