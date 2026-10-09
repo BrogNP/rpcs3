@@ -1676,6 +1676,19 @@ namespace rsx
 		//const u16 clip_x = REGS(0)->surface_clip_origin_x();
 		//const u16 clip_y = REGS(0)->surface_clip_origin_y();
 
+		if (!isHLE && lv2_context && !lv2_context->display_buffers_count && (REGS(0)->surface_dma(0) >> 16) == 0xcafe)
+		{
+			// COMPAT SHIM (unconfirmed firmware contract): see user_command(); remember the in-place surface as the context's only display buffer
+			auto& db = lv2_context->display_buffers[0];
+			db.offset = REGS(0)->surface_offset(0);
+			db.pitch = REGS(0)->surface_pitch(0);
+			db.width = layout.width;
+			db.height = layout.height;
+			lv2_context->display_buffers_count = 1;
+			lv2_context->overlay_surface = true;
+			rsx_log.warning("Overlay present enabled for context 0x%x: surface offset=0x%x pitch=%u %ux%u", lv2_context_id, +db.offset, +db.pitch, +db.width, +db.height);
+		}
+
 		layout.color_addresses = get_color_surface_addresses();
 		layout.zeta_address = get_zeta_surface_address();
 		layout.zeta_pitch = REGS(0)->surface_z_pitch();

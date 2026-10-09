@@ -164,6 +164,7 @@ struct lv2_rsx_context
 	
 	RsxDisplayInfo display_buffers[8];
 	u32 display_buffers_count{ 0 };
+	bool overlay_surface{ false }; // diagnostic/compat: VSH renders in place into the system display buffer (0xCAFE... context DMA)
 	u32 current_display_buffer{ 0 };
 	
 	u32 dma_address{ 0 };
