@@ -23,6 +23,174 @@
 #include "Emu/Cell/lv2/sys_process.h"
 
 static atomic_t<u64> g_diag_rsx_loop_time = 0; // diagnostic
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#include <TlHelp32.h>
+#include <DbgHelp.h>
+#endif
+
+// diagnostic: whole-process stall detector. Dumps the stacks of every host thread once if the VBlank thread stops ticking.
+static atomic_t<u64> g_diag_vblank_tick = 0;
+
+#ifdef _WIN32
+static void diag_dump_all_threads()
+{
+	struct frames_t
+	{
+		DWORD tid = 0;
+		std::wstring name;
+		std::vector<DWORD64> pcs;
+	};
+
+	std::vector<frames_t> all;
+	const HANDLE process = GetCurrentProcess();
+	SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME);
+	SymInitialize(process, nullptr, TRUE);
+
+	const HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+	THREADENTRY32 te{};
+	te.dwSize = sizeof(te);
+
+	std::vector<HANDLE> suspended;
+
+	if (Thread32First(snap, &te))
+	{
+		do
+		{
+			if (te.th32OwnerProcessID != GetCurrentProcessId() || te.th32ThreadID == GetCurrentThreadId())
+			{
+				continue;
+			}
+
+			if (HANDLE h = OpenThread(THREAD_ALL_ACCESS, FALSE, te.th32ThreadID))
+			{
+				frames_t f;
+				f.tid = te.th32ThreadID;
+
+				PWSTR desc = nullptr;
+				if (SUCCEEDED(GetThreadDescription(h, &desc)) && desc)
+				{
+					f.name = desc;
+					LocalFree(desc);
+				}
+
+				if (SuspendThread(h) != static_cast<DWORD>(-1))
+				{
+					CONTEXT ctx{};
+					ctx.ContextFlags = CONTEXT_FULL;
+
+					if (GetThreadContext(h, &ctx))
+					{
+						STACKFRAME64 st{};
+						st.AddrPC.Mode = st.AddrStack.Mode = st.AddrFrame.Mode = AddrModeFlat;
+						st.AddrPC.Offset = ctx.Rip;
+						st.AddrStack.Offset = ctx.Rsp;
+						st.AddrFrame.Offset = ctx.Rbp;
+
+						for (int i = 0; i < 24; i++)
+						{
+							if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, process, h, &st, &ctx, nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr) || !st.AddrPC.Offset)
+							{
+								break;
+							}
+
+							f.pcs.push_back(st.AddrPC.Offset);
+						}
+					}
+
+					suspended.push_back(h);
+				}
+				else
+				{
+					CloseHandle(h);
+				}
+
+				all.push_back(std::move(f));
+			}
+		}
+		while (Thread32Next(snap, &te));
+	}
+
+	CloseHandle(snap);
+
+	// Symbolize while the threads are still stopped (their stacks cannot change), then let them run again
+	std::string out;
+	std::vector<char> symbuf(sizeof(SYMBOL_INFO) + 256);
+	auto* sym = reinterpret_cast<SYMBOL_INFO*>(symbuf.data());
+	sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+	sym->MaxNameLen = 255;
+
+	for (const auto& f : all)
+	{
+		if (f.pcs.empty())
+		{
+			continue;
+		}
+
+		std::string name;
+		for (wchar_t c : f.name) name.push_back(c < 128 ? static_cast<char>(c) : '?');
+		fmt::append(out, "\n[host thread %u \"%s\"]", f.tid, name);
+
+		for (DWORD64 pc : f.pcs)
+		{
+			DWORD64 disp = 0;
+			if (SymFromAddr(process, pc, &disp, sym))
+			{
+				fmt::append(out, "\n    %s+0x%x", sym->Name, static_cast<u32>(disp));
+			}
+			else
+			{
+				fmt::append(out, "\n    0x%llx", pc);
+			}
+		}
+	}
+
+	for (HANDLE h : suspended)
+	{
+		ResumeThread(h);
+		CloseHandle(h);
+	}
+
+	rsx_log.error("DIAG stall detector: host thread stacks:%s", out);
+}
+#endif
+
+static void diag_start_stall_detector()
+{
+#ifdef _WIN32
+	static std::once_flag once;
+	std::call_once(once, []
+	{
+		std::thread([]
+		{
+			u64 last = 0;
+			u32 stalled_ms = 0;
+			bool dumped = false;
+
+			for (;;)
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+				const u64 now = g_diag_vblank_tick;
+
+				if (now != last)
+				{
+					last = now;
+					stalled_ms = 0;
+					dumped = false;
+				}
+				else if (now && (stalled_ms += 500) >= 4000 && !dumped)
+				{
+					dumped = true;
+					diag_dump_all_threads();
+				}
+			}
+		}).detach();
+	});
+#endif
+}
 extern u32 g_diag_method_hist[0x4000];
 #include "Emu/Cell/lv2/sys_time.h"
 #include "Emu/Cell/Modules/cellGcmSys.h"
@@ -1381,8 +1549,12 @@ namespace rsx
 			u64 local_vblank_count = 0;
 
 			// TODO: exit condition
+			diag_start_stall_detector();
+
 			while (!is_stopped() && thread_ctrl::state() != thread_state::aborting)
 			{
+				g_diag_vblank_tick++;
+
 				// Get current time
 				const u64 current = get_system_time();
 
