@@ -2937,7 +2937,9 @@ shared_ptr<lv2_process> ppu_load_self(const ppu_exec_object& elf, shared_ptr<lv2
 			init_fxo_for_exec(process_ptr, ar, false);
 		}
 
-		if (!ar && !Emu.IsVsh())
+		// The system shared memory objects normally belong to VSH (it creates them in creator mode, see its sysutil init).
+		// Only emulate that ownership when there is no VSH to do it, otherwise its create-only calls fail with EEXIST
+		if (!ar && !Emu.IsVsh() && !Emu.IsVshControlled())
 		{
 			init_system_shared_memory();
 		}
