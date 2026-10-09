@@ -658,7 +658,7 @@ void pad_thread::operator()()
 		}
 
 		// Handle home menu if requested
-		if (!is_vsh && !m_home_menu_open && Emu.IsRunning())
+		if ((!is_vsh || vsh_focus::g_game_process != u32{umax}) && !m_home_menu_open && Emu.IsRunning())
 		{
 			bool ps_button_pressed = false;
 
