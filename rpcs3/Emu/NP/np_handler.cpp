@@ -720,6 +720,76 @@ namespace np
 		return local_ip_addr;
 	}
 
+	np_handler::ipv4_config np_handler::get_ipv4_config()
+	{
+		ipv4_config cfg{};
+		cfg.ip = get_or_discover_local_ip_addr();
+
+		if (!cfg.ip)
+		{
+			return cfg;
+		}
+
+		const auto from_bytes = [](u8 a, u8 b, u8 c, u8 d)
+		{
+			const u8 bytes[4]{a, b, c, d};
+			u32 v;
+			std::memcpy(&v, bytes, 4);
+			return v;
+		};
+
+#ifdef _WIN32
+		std::vector<u8> adapter_infos(sizeof(IP_ADAPTER_INFO));
+		ULONG size_infos = sizeof(IP_ADAPTER_INFO);
+
+		if (GetAdaptersInfo(reinterpret_cast<PIP_ADAPTER_INFO>(adapter_infos.data()), &size_infos) == ERROR_BUFFER_OVERFLOW)
+			adapter_infos.resize(size_infos);
+
+		if (GetAdaptersInfo(reinterpret_cast<PIP_ADAPTER_INFO>(adapter_infos.data()), &size_infos) == NO_ERROR && size_infos)
+		{
+			for (PIP_ADAPTER_INFO info = reinterpret_cast<PIP_ADAPTER_INFO>(adapter_infos.data()); info; info = info->Next)
+			{
+				for (PIP_ADDR_STRING addr = &info->IpAddressList; addr; addr = addr->Next)
+				{
+					in_addr a{}, m{}, g{};
+
+					if (inet_pton(AF_INET, addr->IpAddress.String, &a) == 1 && a.s_addr == cfg.ip && inet_pton(AF_INET, addr->IpMask.String, &m) == 1)
+					{
+						cfg.mask = m.s_addr;
+
+						if (inet_pton(AF_INET, info->GatewayList.IpAddress.String, &g) == 1)
+						{
+							cfg.gateway = g.s_addr;
+						}
+
+						break;
+					}
+				}
+
+				if (cfg.mask)
+				{
+					break;
+				}
+			}
+		}
+#endif
+
+		if (!cfg.mask)
+		{
+			cfg.mask = from_bytes(255, 255, 255, 0);
+		}
+
+		if (!cfg.gateway)
+		{
+			u8 b[4];
+			std::memcpy(b, &cfg.ip, 4);
+			b[3] = 1;
+			std::memcpy(&cfg.gateway, b, 4);
+		}
+
+		return cfg;
+	}
+
 	const std::array<u8, 6>& np_handler::get_ether_addr() const
 	{
 		return ether_address;

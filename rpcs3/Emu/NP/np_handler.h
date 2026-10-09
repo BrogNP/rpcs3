@@ -107,6 +107,9 @@ namespace np
 		const std::array<u8, 6>& get_ether_addr() const;
 		std::array<u8, 6> get_or_discover_ether_addr(); // for LLE firmware network code that runs without HLE netctl init
 		u32 get_or_discover_local_ip_addr(); // network byte order, 0 if unknown
+		// Address, netmask and default gateway of the host interface the guest traffic uses (network byte order). Falls back to /24 and x.x.x.1
+		struct ipv4_config { u32 ip = 0, mask = 0, gateway = 0; };
+		ipv4_config get_ipv4_config();
 		const std::string& get_hostname() const;
 		u32 get_local_ip_addr() const;
 		u32 get_public_ip_addr() const;

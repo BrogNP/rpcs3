@@ -1130,12 +1130,25 @@ error_code sys_net_bnet_setsockopt(ppu_thread& ppu, s32 s, s32 level, s32 optnam
 		break;
 	}
 
+	// BSD takes u_char for IP_MULTICAST_TTL / IP_MULTICAST_LOOP (the firmware DHCP client passes a single byte)
+	std::vector<u8> optval_copy;
+
+	if (optlen == 1 && level == SYS_NET_IPPROTO_IP && (optname == SYS_NET_IP_MULTICAST_TTL || optname == SYS_NET_IP_MULTICAST_LOOP))
+	{
+		const be_t<s32> widened = *vm::_ptr<u8>(optval.addr());
+		optval_copy.assign(reinterpret_cast<const u8*>(&widened), reinterpret_cast<const u8*>(&widened) + sizeof(widened));
+		optlen = sizeof(s32);
+	}
+
 	if (optlen < sizeof(s32))
 	{
 		return -SYS_NET_EINVAL;
 	}
 
-	std::vector<u8> optval_copy(vm::_ptr<u8>(optval.addr()), vm::_ptr<u8>(optval.addr() + optlen));
+	if (optval_copy.empty())
+	{
+		optval_copy.assign(vm::_ptr<u8>(optval.addr()), vm::_ptr<u8>(optval.addr() + optlen));
+	}
 
 	const auto sock = idm::check<lv2_socket>(s, [&, notify = lv2_obj::notify_all_t()](lv2_socket& sock) -> s32
 		{
@@ -2103,6 +2116,26 @@ error_code sys_net_bnet_ioctl(ppu_thread& ppu, s32 arg1, u32 arg2, u32 arg3)
 
 			*reinterpret_cast<be_t<u16>*>(ifr + 16) = flags;
 		}
+		else if (io_out && (io_num == 33 || io_num == 37 || io_num == 35) && !is_lo)
+		{
+			// SIOCGIFADDR / SIOCGIFNETMASK / SIOCGIFBRDADDR: sockaddr_in at ifreq+16
+			const auto cfg = g_fxo->get<named_thread<np::np_handler>>().get_ipv4_config();
+			u32 value = cfg.ip;
+
+			if (io_num == 37)
+			{
+				value = cfg.mask;
+			}
+			else if (io_num == 35)
+			{
+				value = cfg.ip | ~cfg.mask;
+			}
+
+			ifr[16] = 16; // sin_len
+			ifr[17] = 2;  // AF_INET
+			std::memset(ifr + 18, 0, 14);
+			std::memcpy(ifr + 20, &value, 4);
+		}
 		else if (io_out && io_num == 140 && !is_lo)
 		{
 			// Link-layer address of the interface
@@ -2136,13 +2169,13 @@ static std::vector<u8> net_build_iflist()
 	struct nic_t { const char* name; u16 index; u8 type; u16 flags; u32 mtu; bool mac; u8 ip[4]; u8 mask[4]; };
 
 	const bool link_up = net_virtual_link_up();
-	u32 host_ip = 0;
+	np::np_handler::ipv4_config host_cfg{};
 	std::array<u8, 6> host_mac{};
 
 	if (link_up)
 	{
 		auto& nph = g_fxo->get<named_thread<np::np_handler>>();
-		host_ip = nph.get_or_discover_local_ip_addr();
+		host_cfg = nph.get_ipv4_config();
 		host_mac = nph.get_or_discover_ether_addr();
 	}
 
@@ -2151,7 +2184,8 @@ static std::vector<u8> net_build_iflist()
 		{"eth0", 2, 6, static_cast<u16>(0x8803 | (link_up ? 0x40 : 0)), 1500, true, {}, {255, 255, 255, 0}},
 	};
 
-	std::memcpy(nics[1].ip, &host_ip, 4);
+	std::memcpy(nics[1].ip, &host_cfg.ip, 4);
+	if (host_cfg.mask) std::memcpy(nics[1].mask, &host_cfg.mask, 4);
 
 	for (const nic_t& nic : nics)
 	{
@@ -2188,6 +2222,54 @@ static std::vector<u8> net_build_iflist()
 	return out;
 }
 
+// Routing table as returned by sysctl({CTL_NET, PF_ROUTE, 0, af, NET_RT_DUMP, 0}): rt_msghdr (120 bytes) followed by sockaddrs
+// (dst, gateway, netmask in RTA order). Parsed by the firmware in sys_net_get_routing_table_af (FUN_0001fa74 in vsh.elf).
+static std::vector<u8> net_build_route_dump(s32 af)
+{
+	std::vector<u8> out;
+
+	if ((af != 0 && af != 2) || !net_virtual_link_up())
+	{
+		return out;
+	}
+
+	const auto cfg = g_fxo->get<named_thread<np::np_handler>>().get_ipv4_config();
+
+	if (!cfg.ip)
+	{
+		return out;
+	}
+
+	const auto put16 = [](std::vector<u8>& v, u16 x) { v.push_back(x >> 8); v.push_back(x & 0xff); };
+	const auto put32 = [&](std::vector<u8>& v, u32 x) { put16(v, x >> 16); put16(v, x & 0xffff); };
+	const auto sockaddr_in = [&](std::vector<u8>& v, u32 net_order_ip)
+	{
+		v.push_back(16); v.push_back(2); put16(v, 0);
+		const u8* b = reinterpret_cast<const u8*>(&net_order_ip);
+		v.insert(v.end(), b, b + 4);
+		v.insert(v.end(), 8, u8{0});
+	};
+
+	const auto add_route = [&](u32 dst, u32 gw, u32 mask, u32 flags, u16 index)
+	{
+		std::vector<u8> m;
+		put16(m, 0); m.push_back(3); m.push_back(4 /* RTM_GET */); put16(m, index); put16(m, 0);
+		put32(m, flags); put32(m, 0x1 | 0x2 | 0x4 /* RTA_DST | RTA_GATEWAY | RTA_NETMASK */);
+		m.resize(120);
+		sockaddr_in(m, dst);
+		sockaddr_in(m, gw);
+		sockaddr_in(m, mask);
+		m[0] = static_cast<u8>(m.size() >> 8); m[1] = static_cast<u8>(m.size());
+		out.insert(out.end(), m.begin(), m.end());
+	};
+
+	// default route via the gateway: RTF_UP | RTF_GATEWAY | RTF_STATIC
+	add_route(0, cfg.gateway, 0, 0x1 | 0x2 | 0x800, 2);
+	// directly attached network: RTF_UP | RTF_CLONING
+	add_route(cfg.ip & cfg.mask, cfg.ip, cfg.mask, 0x1 | 0x100, 2);
+	return out;
+}
+
 error_code sys_net_bnet_sysctl(ppu_thread& ppu, u32 arg1, u32 arg2, u32 arg3, vm::ptr<void> arg4, u32 arg5, u32 arg6)
 {
 	ppu.state += cpu_flag::wait;
@@ -2205,6 +2287,31 @@ error_code sys_net_bnet_sysctl(ppu_thread& ppu, u32 arg1, u32 arg2, u32 arg3, vm
 			const std::vector<u8> data = net_build_iflist();
 			const auto oldlenp = vm::static_ptr_cast<be_t<u64>>(arg4); // size_t is 64-bit on the guest
 			sys_net.notice("sys_net_bnet_sysctl(): NET_RT_IFLIST -> %u bytes (oldlenp=0x%x)", data.size(), arg4.addr());
+
+			if (oldlenp)
+			{
+				const u64 capacity = *oldlenp;
+				*oldlenp = static_cast<u64>(data.size());
+
+				if (arg3)
+				{
+					if (capacity < data.size())
+					{
+						return -SYS_NET_ENOMEM;
+					}
+
+					std::memcpy(vm::base(arg3), data.data(), data.size());
+				}
+			}
+
+			return CELL_OK;
+		}
+
+		if (mib[0] == 4 /* CTL_NET */ && mib[1] == 17 /* PF_ROUTE */ && mib[4] == 1 /* NET_RT_DUMP */)
+		{
+			const std::vector<u8> data = net_build_route_dump(mib[3]);
+			const auto oldlenp = vm::static_ptr_cast<be_t<u64>>(arg4);
+			sys_net.notice("sys_net_bnet_sysctl(): NET_RT_DUMP af=%d -> %u bytes", mib[3], data.size());
 
 			if (oldlenp)
 			{

@@ -70,18 +70,18 @@ namespace
 		}
 
 		auto& nph = g_fxo->get<named_thread<np::np_handler>>();
-		const u32 host_ip = nph.get_or_discover_local_ip_addr();
+		const auto cfg = nph.get_ipv4_config();
 		const u32 dns_ip = nph.get_dns_ip();
 
-		if (!host_ip)
+		if (!cfg.ip)
 		{
 			return std::nullopt;
 		}
 
-		u8 ip[4], gw[4], server[4], mask[4]{255, 255, 255, 0};
-		std::memcpy(ip, &host_ip, 4);
-		std::memcpy(gw, &host_ip, 4);
-		gw[3] = 1;
+		u8 ip[4], gw[4], server[4], mask[4];
+		std::memcpy(ip, &cfg.ip, 4);
+		std::memcpy(gw, &cfg.gateway, 4);
+		std::memcpy(mask, &cfg.mask, 4);
 		std::memcpy(server, gw, 4);
 
 		std::vector<u8> out(240, 0);
@@ -739,6 +739,17 @@ s32 lv2_socket_native::setsockopt(s32 level, s32 optname, const std::vector<u8>&
 {
 	std::lock_guard lock(mutex);
 
+	{
+		// The virtual DHCP client socket has no host socket behind it: options (SO_BROADCAST, IP_MULTICAST_IF with an interface index...) are accepted as is
+		auto& dhcp = g_fxo->get<virtual_dhcp_t>();
+		std::lock_guard dlock(dhcp.mtx);
+
+		if (dhcp.inbox.contains(lv2_id))
+		{
+			return CELL_OK;
+		}
+	}
+
 	int native_int         = 0;
 	int native_level       = -1;
 	int native_opt         = -1;
@@ -1045,12 +1056,7 @@ std::optional<std::tuple<s32, std::vector<u8>, sys_net_sockaddr>> lv2_socket_nat
 			server.sin_len = sizeof(server);
 			server.sin_family = SYS_NET_AF_INET;
 			server.sin_port = 67;
-			u32 host_ip = g_fxo->get<named_thread<np::np_handler>>().get_or_discover_local_ip_addr();
-			u8 octets[4];
-			std::memcpy(octets, &host_ip, 4);
-			octets[3] = 1;
-			std::memcpy(&host_ip, octets, 4);
-			server.sin_addr = std::bit_cast<be_t<u32>, u32>(host_ip);
+			server.sin_addr = std::bit_cast<be_t<u32>, u32>(g_fxo->get<named_thread<np::np_handler>>().get_ipv4_config().gateway);
 
 			sys_net_sockaddr sn_addr{};
 			std::memcpy(&sn_addr, &server, sizeof(server));
