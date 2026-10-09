@@ -76,6 +76,28 @@ namespace rsx
 		if (!RSX(ctx)->isHLE)
 		{
 			sys_rsx_context_attribute(RSX(ctx)->lv2_context_id, 0xFEF, 0, arg, 0, 0);
+
+			// COMPAT SHIM (unconfirmed firmware contract): the VSH's in-game XMB renders in place into the "system display buffer"
+			// (color surface bound through a 0xCAFE000F|n<<4 context DMA handle) and signals frame completion with a user command
+			// instead of flipping. This emulation has no shared scan-out between processes, so present the surface it just
+			// finished as if it was a display buffer of that context.
+			if (const auto lv2_ctx = RSX(ctx)->lv2_context; lv2_ctx && !lv2_ctx->display_buffers_count && (REGS(ctx)->surface_dma(0) >> 16) == 0xcafe
+				&& REGS(ctx)->surface_clip_width() && REGS(ctx)->surface_clip_height())
+			{
+				auto& db = lv2_ctx->display_buffers[0];
+				db.offset = REGS(ctx)->surface_offset(0);
+				db.pitch = REGS(ctx)->surface_pitch(0);
+				db.width = REGS(ctx)->surface_clip_width();
+				db.height = REGS(ctx)->surface_clip_height();
+				lv2_ctx->display_buffers_count = 1;
+				rsx_log.warning("Overlay present enabled for context 0x%x: surface offset=0x%x pitch=%u %ux%u", RSX(ctx)->lv2_context_id, +db.offset, +db.pitch, +db.width, +db.height);
+			}
+
+			if (const auto lv2_ctx = RSX(ctx)->lv2_context; lv2_ctx && lv2_ctx->display_buffers_count == 1 && (REGS(ctx)->surface_dma(0) >> 16) == 0xcafe)
+			{
+				RSX(ctx)->request_emu_flip(0);
+			}
+
 			return;
 		}
 
