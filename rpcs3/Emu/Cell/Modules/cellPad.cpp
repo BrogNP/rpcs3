@@ -3,6 +3,7 @@
 #include "Emu/system_config.h"
 #include "Emu/Cell/PPUModule.h"
 #include "Emu/Cell/lv2/sys_process.h"
+#include "Emu/Cell/timers.hpp"
 #include "Emu/Io/pad_types.h"
 #include "Emu/RSX/Overlays/overlay_debug_overlay.h"
 #include "Input/pad_thread.h"
@@ -351,6 +352,8 @@ error_code cellPadClearBuf(u32 port_no)
 
 	return CELL_OK;
 }
+
+extern atomic_t<u64> g_vsh_syscall_trace_until;
 
 static void pad_get_data_impl(u32 port_no, CellPadData* data, bool get_periph_data)
 {
@@ -741,6 +744,12 @@ extern void pad_get_data(u32 port_no, CellPadData* data, bool get_periph_data = 
 	if (s_last_ps.exchange(ps_button != 0) != (ps_button != 0))
 	{
 		cellPad.success("Background VSH pad data: PS button %s", ps_button ? "pressed" : "released");
+
+		if (ps_button)
+		{
+			// Diagnostic: log what VSH does in the next 1.5 seconds
+			g_vsh_syscall_trace_until = get_system_time() + 1'500'000;
+		}
 	}
 
 	for (u32 i = CELL_PAD_BTN_OFFSET_DIGITAL1; i < data->len && i < std::size(data->button); i++)
