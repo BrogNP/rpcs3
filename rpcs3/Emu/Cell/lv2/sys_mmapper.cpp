@@ -17,6 +17,8 @@ LOG_CHANNEL(sys_mmapper);
 
 void init_system_shared_memory()
 {
+	sys_mmapper.success("init_system_shared_memory(): pre-registering sysutil/MIO shm keys (process=0x%x)", id_manager::g_process);
+
 	for (u64 key : {SYS_MMAPPER_SYSUTIL_SHM_KEY, SYS_MMAPPER_MIO_SHM_KEY})
 	{
 		ensure(idm::import<lv2_obj, lv2_memory>([&]() -> shared_ptr<lv2_memory>

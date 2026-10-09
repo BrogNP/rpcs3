@@ -207,6 +207,8 @@ static error_code prx_load_module(const std::string& vpath, u64 flags, vm::ptr<s
 	constexpr std::string_view firmware_sprx_dir = "/dev_flash/sys/external/";
 	const bool is_firmware_sprx = vpath0.starts_with(firmware_sprx_dir) && g_prx_list.count(std::string_view(vpath0).substr(firmware_sprx_dir.size()));
 
+	std::string_view selection_reason;
+
 	if (is_firmware_sprx)
 	{
 		// Per-process: games spawned by VSH must keep using HLE (Emu.GetDir() is the boot path, which stays "/dev_flash/" for them too)
@@ -216,27 +218,34 @@ static error_code prx_load_module(const std::string& vpath, u64 flags, vm::ptr<s
 		{
 			// No HLE at all with in VSH
 			ignore = false;
+			selection_reason = "firmware process (VSH): no HLE";
 		}
 		else if (name == "libsysutil.sprx" && Emu.IsVshControlled())
 		{
 			// Games under VSH use HLE sysutil: the LLE one waits on VSH-private shared objects (ie. "_s__shm" mutex) that nobody creates
 			ignore = true;
+			selection_reason = "override: game under VSH uses HLE sysutil";
 		}
 		else if (g_cfg.core.libraries_control.get_set().count(name + ":lle"))
 		{
 			// Force LLE
 			ignore = false;
+			selection_reason = "config: forced LLE";
 		}
 		else if (g_cfg.core.libraries_control.get_set().count(name + ":hle"))
 		{
 			// Force HLE
 			ignore = true;
+			selection_reason = "config: forced HLE";
 		}
 		else
 		{
 			// Use list
 			ignore = ::at32(g_prx_list, name) != 0;
+			selection_reason = "default module list";
 		}
+
+		sys_prx.success("Module selection: %s -> %s [%s] (process=0x%x, elf=%s)", name, ignore ? "HLE" : "LLE", selection_reason, id_manager::g_process, process ? std::string_view(process->ELF_file_path) : std::string_view());
 	}
 	else if (vpath0.starts_with("/"))
 	{

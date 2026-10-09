@@ -2941,6 +2941,10 @@ shared_ptr<lv2_process> ppu_load_self(const ppu_exec_object& elf, shared_ptr<lv2
 		{
 			init_system_shared_memory();
 		}
+		else if (!ar)
+		{
+			ppu_loader.success("init_system_shared_memory() skipped (VSH process 0x%x)", id_manager::g_process);
+		}
 
 		liblv2_begin = 0;
 		liblv2_end = 0;

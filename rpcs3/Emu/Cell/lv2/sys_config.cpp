@@ -250,6 +250,12 @@ void lv2_config_service::notify() const
 			listeners.push_back(listener.get_shared_ptr());
 	});
 
+	// Diagnostic: service registration reaching listeners (the kernel's padmanager services at startup are not interesting)
+	if (id != SYS_CONFIG_SERVICE_PADMANAGER && id != SYS_CONFIG_SERVICE_PADMANAGER2)
+	{
+		sys_config.success("Service notify: service_id=0x%llx user_id=0x%llx registered_by_process=0x%x -> %u listener(s)", static_cast<u64>(id), user_id, id_manager::g_process, ::size32(listeners));
+	}
+
 	for (auto& listener : listeners)
 	{
 		listener->notify(sptr);
