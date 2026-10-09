@@ -1338,9 +1338,15 @@ extern void ppu_execute_syscall(ppu_thread& ppu, u64 code)
 				// Only the threads that take part in the sysutil handshake (synchronization primitives included, that is how it is done)
 				const bool important_thread = thread_name.find("main_thread") != umax || thread_name.find("SceVshSysutil") != umax || thread_name.find("ScePafJob") != umax;
 
+				// Event traffic from every thread except the known noisy ones
+				const bool event_syscall = name.starts_with("sys_event_port_send") || name.starts_with("sys_event_queue_receive") || name.starts_with("sys_event_queue_tryreceive");
+				const bool noisy_thread = thread_name.find("_aud_") != umax || thread_name.find("_mio") != umax || thread_name.find("_sys_camera") != umax ||
+					thread_name.find("_sys_micin") != umax || thread_name.find("SceWave") != umax || thread_name.find("SceNpMatching2") != umax ||
+					thread_name.find("DRAW_THREAD") != umax || thread_name.find("Cri") != umax || thread_name.find("SceVshPower") != umax;
+
 				if (name != "sys_timer_usleep" && name != "sys_ppu_thread_yield" && name != "sys_memory_get_page_attribute" &&
 					name != "sys_hid_manager_read" && name != "sys_hid_manager_ioctl" && name != "sys_time_get_system_time" && name != "sys_time_get_current_time" &&
-					important_thread)
+					(important_thread || (event_syscall && !noisy_thread)))
 				{
 					ppu_log.success("%s syscall %s(0x%llx, 0x%llx, 0x%llx, 0x%llx) -> 0x%llx [thread %s]", id_manager::g_process == lv2_process::id_base ? "VSH" : "GAME", name, args[0], args[1], args[2], args[3], ppu.gpr[3], thread_name);
 
