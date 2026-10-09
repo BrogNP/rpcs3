@@ -266,6 +266,19 @@ namespace rsx
 
 		default:
 		{
+			if ((location >> 16) == 0xcafe)
+			{
+				// diagnostic: LV1-style context DMA handle (0xCAFE000F | id << 8 | n << 4) emitted by the VSH's libgcm
+				std::string mapped;
+				for (u32 i = 0; i < 4096 && mapped.size() < 1500; i++)
+				{
+					if (const u32 ea = render->lv2_context->iomap_table.ea[i]; ea != umax)
+					{
+						fmt::append(mapped, " [io 0x%x -> ea 0x%x]", i << 20, ea);
+					}
+				}
+				rsx_log.error("DIAG unknown context DMA 0x%x offset=0x%x process=0x%x iomap:%s", location, offset, +id_manager::g_process, mapped);
+			}
 			msg = "Invalid location!"sv;
 			break;
 		}
