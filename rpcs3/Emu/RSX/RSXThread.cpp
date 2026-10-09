@@ -1185,6 +1185,14 @@ namespace rsx
 				fmt::append(hist, " [0x%x]=%u", best << 2, g_diag_method_hist[best]);
 				g_diag_method_hist[best] = 0;
 			}
+			// Rarely executed methods (flips, labels, user commands, display) are the interesting ones
+			std::string rare;
+			int rare_n = 0;
+			for (u32 r = 1; r < 0x4000 && rare_n < 60; r++)
+			{
+				if (g_diag_method_hist[r] > 0 && g_diag_method_hist[r] <= 300 && !(r >= 0x4000 / 4 && r < 0x4000 / 4)) { fmt::append(rare, " [0x%x]=%u", r << 2, g_diag_method_hist[r]); rare_n++; }
+			}
+			if (!rare.empty()) rsx_log.warning("DIAG VSH rare methods:%s", rare);
 			std::memset(g_diag_method_hist, 0, sizeof(g_diag_method_hist));
 			rsx_log.warning("DIAG VSH methods in last second:%s", hist);
 		}
