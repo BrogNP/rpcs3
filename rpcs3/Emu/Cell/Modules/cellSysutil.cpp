@@ -116,7 +116,8 @@ bool sysutilModuleInit(lv2_prx& prx)
 	}
 
 	const vm::ptr<sysutil_module> data = vm::cast(prx.hle_data);
-	const auto& funcs = g_fxo->get<ppu_function_manager>();
+	// Function table is per-process (see hle_load in sys_prx.cpp)
+	const auto& funcs = ensure(idm::get_unlocked<lv2_obj, lv2_process>(id_manager::g_process))->local_typemap->get<ppu_function_manager>();
 	data->start[0] = funcs.func_addr(FIND_FUNC(sysutilModuleStart), true);
 	data->start[1] = data.addr();
 	data->stop[0] = funcs.func_addr(FIND_FUNC(sysutilModuleStop), true);
