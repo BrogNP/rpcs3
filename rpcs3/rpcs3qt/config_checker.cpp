@@ -210,6 +210,7 @@ bool config_checker::check_config(cfg_mode mode, QString content_or_serial, QStr
 			const std::string key = base->get_name();
 
 			if (key == config->sys.console_psid.get_name() ||
+				key == config->sys.console_idps.get_name() ||
 				key == config->sys.system_name.get_name() ||
 				key == config->video.vk.adapter.get_name())
 			{

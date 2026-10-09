@@ -323,6 +323,10 @@ struct cfg_root : cfg::node
 		cfg::_int<-60*60*24*365*100LL, 60*60*24*365*100LL> console_time_offset{ this, "Console time offset (s)", 0 }; // console time offset, limited to +/-100years
 		cfg::string system_name{this, "System Name", get_random_system_name()};
 		cfg::uint128 console_psid{this, "Console PSID", get_random_psid()};
+		// Console ID (IDPS): the 16-byte identifier returned by sys_ss_get_console_id / AIM_get_device_id, which is what the system software
+		// registers with PSN (and a private PSN server) as the console's identity. Format: 0x + 32 hex digits. The default is the
+		// value RPCS3 has always reported.
+		cfg::uint128 console_idps{this, "Console ID (IDPS)", (u128{0x0000000100890'00Bull} << 64) | u128{0x1400EFDDCA255266ull}};
 		cfg::string hdd_model{this, "HDD Model Name", ""};
 		cfg::string hdd_serial{this, "HDD Serial Number", ""};
 		cfg::node_map_entry sup_argv{ this, "Process ARGV" };
