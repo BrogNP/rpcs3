@@ -1156,7 +1156,7 @@ namespace rsx
 				id_manager::g_process = process;
 				id_manager::g_id = id;
 				const auto acquired = lv2_process::acquire_globals(process);
-				sys_rsx_context_attribute(idm::last_id<lv2_rsx_context>(), 0xFED, 1, get_guest_system_time(post_event_time), 0, 0);
+				sys_rsx_context_attribute(id, 0xFED, 1, get_guest_system_time(post_event_time), 0, 0);
 			}
 
 			// Restore
