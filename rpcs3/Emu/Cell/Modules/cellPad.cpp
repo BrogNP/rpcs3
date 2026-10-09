@@ -352,14 +352,14 @@ error_code cellPadClearBuf(u32 port_no)
 	return CELL_OK;
 }
 
-extern void pad_get_data(u32 port_no, CellPadData* data, bool get_periph_data = false)
+static void pad_get_data_impl(u32 port_no, CellPadData* data, bool get_periph_data)
 {
 	auto& config = g_fxo->get<pad_info>();
 	const auto handler = pad::get_pad_thread();
 	const auto& pad = handler->GetPads()[port_no];
 	const PadInfo& rinfo = handler->GetInfo();
 
-	if (rinfo.system_info & CELL_PAD_INFO_INTERCEPTED || vsh_focus::foreground_process() != id_manager::g_process)
+	if (rinfo.system_info & CELL_PAD_INFO_INTERCEPTED)
 	{
 		data->len = CELL_PAD_LEN_NO_CHANGE;
 		return;
@@ -707,6 +707,43 @@ extern void pad_get_data(u32 port_no, CellPadData* data, bool get_periph_data = 
 		break;
 	}
 	}
+}
+
+extern void pad_get_data(u32 port_no, CellPadData* data, bool get_periph_data = false)
+{
+	const u32 process = id_manager::g_process;
+
+	if (vsh_focus::foreground_process() == process)
+	{
+		pad_get_data_impl(port_no, data, get_periph_data);
+		return;
+	}
+
+	if (process != lv2_process::id_base)
+	{
+		// Background game gets no input
+		data->len = CELL_PAD_LEN_NO_CHANGE;
+		return;
+	}
+
+	// VSH in the background keeps watching the pad for the PS button, that is how it knows to open the in-game XMB
+	pad_get_data_impl(port_no, data, get_periph_data);
+
+	if (data->len == CELL_PAD_LEN_NO_CHANGE)
+	{
+		return;
+	}
+
+	const u16 ps_button = data->button[CELL_PAD_BTN_OFFSET_DIGITAL1] & CELL_PAD_CTRL_PS;
+
+	for (u32 i = CELL_PAD_BTN_OFFSET_DIGITAL1; i < data->len && i < std::size(data->button); i++)
+	{
+		const bool is_stick = i >= CELL_PAD_BTN_OFFSET_ANALOG_RIGHT_X && i <= CELL_PAD_BTN_OFFSET_ANALOG_LEFT_Y;
+		const bool is_sensor = i >= CELL_PAD_BTN_OFFSET_SENSOR_X;
+		data->button[i] = is_stick ? 0x80 : is_sensor ? 0x200 : 0;
+	}
+
+	data->button[CELL_PAD_BTN_OFFSET_DIGITAL1] = ps_button;
 }
 
 error_code cellPadGetData(u32 port_no, vm::ptr<CellPadData> data)
