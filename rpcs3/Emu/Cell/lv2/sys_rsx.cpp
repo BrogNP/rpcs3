@@ -124,7 +124,7 @@ bool rsx::thread::send_event(lv2_rsx_context* context, u64 data1, u64 event_flag
 	// diagnostic: first few deliveries per process, with mask and port result
 	static atomic_t<u32> s_diag_count[8]{};
 	const u32 diag_proc = id_manager::g_process;
-	const bool diag = diag_proc == 0x1000000 && vsh_focus::g_vsh_in_front && s_diag_count[0].fetch_op([](u32& v){ if (v >= 40) return false; v++; return true; }).second;
+	const bool diag = diag_proc == 0x1000000 && vsh_focus::g_vsh_in_front && s_diag_count[0].fetch_op([](u32& v){ if (v >= 12) return false; v++; return true; }).second;
 
 	if (diag && !event_flags) sys_rsx.warning("DIAG send_event: process=0x%x requested=0x%x handlers=0x%x -> masked out", diag_proc, requested_flags, +vm::_ref<RsxDriverInfo>(context->driver_info).handlers);
 

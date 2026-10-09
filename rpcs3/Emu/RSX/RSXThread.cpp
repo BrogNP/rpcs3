@@ -21,6 +21,8 @@
 #include "Emu/Cell/timers.hpp"
 #include "Emu/Cell/lv2/sys_event.h"
 #include "Emu/Cell/lv2/sys_process.h"
+
+static atomic_t<u64> g_diag_rsx_loop_time = 0; // diagnostic
 #include "Emu/Cell/lv2/sys_time.h"
 #include "Emu/Cell/Modules/cellGcmSys.h"
 #include "util/serialization_ext.hpp"
@@ -1131,6 +1133,14 @@ namespace rsx
 	{
 		vblank_count++;
 
+		if (!isHLE && vsh_focus::g_vsh_in_front && vblank_count % 60 == 0)
+		{
+			// diagnostic heartbeat: is the RSX thread still looping, and where is the FIFO?
+			const u64 age_ms = (get_system_time() - g_diag_rsx_loop_time) / 1000;
+			const auto c = lv2_context;
+			rsx_log.warning("DIAG heartbeat: rsx loop last ran %llums ago, context=0x%x get=0x%x put=0x%x state=0x%x irq_mask=0x%x", age_ms, lv2_context_id, c && ctrl ? +ctrl->get : 0u, c && ctrl ? +ctrl->put : 0u, +state.load(), +m_eng_interrupt_mask.load());
+		}
+
 		if (isHLE)
 		{
 			if (auto ptr = vblank_handler)
@@ -1479,6 +1489,7 @@ namespace rsx
 
 	void thread::do_local_task(FIFO::state state)
 	{
+		g_diag_rsx_loop_time = get_system_time();
 		m_eng_interrupt_mask.clear(rsx::backend_interrupt);
 
 		if (async_flip_requested & flip_request::emu_requested)
