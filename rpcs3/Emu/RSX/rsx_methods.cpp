@@ -3,6 +3,7 @@
 #include "RSXThread.h"
 #include "Emu/Cell/PPUThread.h"
 #include "Emu/Cell/lv2/sys_rsx.h"
+#include "Emu/Cell/lv2/sys_process.h"
 
 #include "Emu/System.h"
 #include "Emu/system_config.h"
@@ -99,6 +100,10 @@ namespace rsx
 		{
 			static void impl(context* ctx, u32 /*reg*/, u32 arg)
 			{
+				if (static atomic_t<u32> s_diag = 0; vsh_focus::g_vsh_in_front && s_diag.fetch_op([](u32& v){ return v < 30 && ++v; }).second)
+				{
+					rsx_log.warning("DIAG driver_flip method: context=0x%x process=0x%x head=%u arg=0x%x", RSX(ctx)->lv2_context_id, +id_manager::g_process, index, arg);
+				}
 				sys_rsx_context_attribute(RSX(ctx)->lv2_context_id, 0x102, index, arg, 0, 0);
 			}
 		};
@@ -113,6 +118,10 @@ namespace rsx
 					RSX(ctx)->flip_notification_count++;
 				}
 
+				if (static atomic_t<u32> s_diag = 0; vsh_focus::g_vsh_in_front && s_diag.fetch_op([](u32& v){ return v < 30 && ++v; }).second)
+				{
+					rsx_log.warning("DIAG queue_flip method: context=0x%x process=0x%x head=%u arg=0x%x", RSX(ctx)->lv2_context_id, +id_manager::g_process, index, arg);
+				}
 				sys_rsx_context_attribute(RSX(ctx)->lv2_context_id, 0x103, index, arg, 0, 0);
 			}
 		};
