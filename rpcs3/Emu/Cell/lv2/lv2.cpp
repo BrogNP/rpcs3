@@ -1343,6 +1343,18 @@ extern void ppu_execute_syscall(ppu_thread& ppu, u64 code)
 					important_thread)
 				{
 					ppu_log.success("%s syscall %s(0x%llx, 0x%llx, 0x%llx, 0x%llx) -> 0x%llx [thread %s]", id_manager::g_process == lv2_process::id_base ? "VSH" : "GAME", name, args[0], args[1], args[2], args[3], ppu.gpr[3], thread_name);
+
+					// Where is a ScePafJob thread waiting? Dump its call stack the first time it shows up in the window (limited)
+					if (id_manager::g_process == lv2_process::id_base && thread_name.find("ScePafJob") != umax && name == "sys_mutex_lock")
+					{
+						static atomic_t<u32> s_last_dumped{0};
+						static atomic_t<u32> s_dump_count{0};
+
+						if (s_last_dumped.exchange(ppu.id) != ppu.id && s_dump_count++ < 6)
+						{
+							ppu_log.success("VSH ScePafJob thread 0x%x call stack:\n%s", ppu.id, ppu.dump_callstack());
+						}
+					}
 				}
 			}
 
