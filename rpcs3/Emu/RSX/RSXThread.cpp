@@ -1257,6 +1257,8 @@ namespace rsx
 					rsx_log.warning("DIAG netctl: inited=%u state(0x729c48)=%u sm_prev=%u sm_cur=%u error=0x%x flags=0x%x link/media(+0xf6c)=%u mac=%02x:%02x:%02x:%02x:%02x:%02x",
 						+vm::read32(0x729c2c), +vm::read32(0x729c48), +vm::read32(base + 0x10), +vm::read32(base + 0x14), +vm::read32(base + 0x798), +vm::read32(base + 0x7a4), +vm::read32(base + 0xf6c),
 						+vm::read8(base + 0x1028), +vm::read8(base + 0x1029), +vm::read8(base + 0x102a), +vm::read8(base + 0x102b), +vm::read8(base + 0x102c), +vm::read8(base + 0x102d));
+					rsx_log.warning("DIAG netctl cfg: device(+0x8e0)=%u mode(+0xdc4)=%u ipmethod(+0x8e8)=%u ssidlen/media(+0x910)=%u linktype(+0x1030)=%u ip=\"%s\" ctxflags=0x%x",
+						+vm::read32(base + 0x8e0), +vm::read32(base + 0xdc4), +vm::read32(base + 0x8e8), +vm::read32(base + 0x910), +vm::read32(base + 0x1030), vm::_ptr<const char>(base + 0x104c), +vm::read32(0x72a3dc));
 				}
 			}
 
