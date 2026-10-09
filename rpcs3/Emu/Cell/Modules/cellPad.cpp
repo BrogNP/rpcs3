@@ -736,6 +736,13 @@ extern void pad_get_data(u32 port_no, CellPadData* data, bool get_periph_data = 
 
 	const u16 ps_button = data->button[CELL_PAD_BTN_OFFSET_DIGITAL1] & CELL_PAD_CTRL_PS;
 
+	static atomic_t<bool> s_last_ps = false;
+
+	if (s_last_ps.exchange(ps_button != 0) != (ps_button != 0))
+	{
+		cellPad.success("Background VSH pad data: PS button %s", ps_button ? "pressed" : "released");
+	}
+
 	for (u32 i = CELL_PAD_BTN_OFFSET_DIGITAL1; i < data->len && i < std::size(data->button); i++)
 	{
 		const bool is_stick = i >= CELL_PAD_BTN_OFFSET_ANALOG_RIGHT_X && i <= CELL_PAD_BTN_OFFSET_ANALOG_LEFT_Y;
