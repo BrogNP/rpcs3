@@ -2108,11 +2108,114 @@ error_code sys_net_bnet_ioctl(ppu_thread& ppu, s32 arg1, u32 arg2, u32 arg3)
 	return CELL_OK;
 }
 
+// Interface list as returned by sysctl({CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST, 0}) in the (NetBSD-derived) layout the firmware's getifaddrs()
+// parses (FUN_00025f78 in vsh.elf): RTM_IFINFO (0x0f) messages {if_msghdr 16 bytes, if_data 0x88 bytes, sockaddr_dl} followed by
+// RTM_NEWADDR (0x0c) messages {ifa_msghdr 20 bytes, netmask, address sockaddr_in}. This is what if_nametoindex() and the netctl code use to find "eth0".
+static std::vector<u8> net_build_iflist()
+{
+	std::vector<u8> out;
+
+	const auto put8 = [&](std::vector<u8>& v, u8 x) { v.push_back(x); };
+	const auto put16 = [&](std::vector<u8>& v, u16 x) { v.push_back(x >> 8); v.push_back(x & 0xff); };
+	const auto put32 = [&](std::vector<u8>& v, u32 x) { put16(v, x >> 16); put16(v, x & 0xffff); };
+	const auto sockaddr_in = [&](std::vector<u8>& v, const u8* ip)
+	{
+		put8(v, 16); put8(v, 2); put16(v, 0);
+		v.insert(v.end(), ip, ip + 4);
+		v.insert(v.end(), 8, u8{0});
+	};
+
+	struct nic_t { const char* name; u16 index; u8 type; u16 flags; u32 mtu; bool mac; u8 ip[4]; u8 mask[4]; };
+
+	const bool link_up = net_virtual_link_up();
+	u32 host_ip = 0;
+	std::array<u8, 6> host_mac{};
+
+	if (link_up)
+	{
+		auto& nph = g_fxo->get<named_thread<np::np_handler>>();
+		host_ip = nph.get_or_discover_local_ip_addr();
+		host_mac = nph.get_or_discover_ether_addr();
+	}
+
+	nic_t nics[2]{
+		{"lo0", 1, 24, 0x8049, 16384, false, {127, 0, 0, 1}, {255, 0, 0, 0}},
+		{"eth0", 2, 6, static_cast<u16>(0x8803 | (link_up ? 0x40 : 0)), 1500, true, {}, {255, 255, 255, 0}},
+	};
+
+	std::memcpy(nics[1].ip, &host_ip, 4);
+
+	for (const nic_t& nic : nics)
+	{
+		// RTM_IFINFO
+		std::vector<u8> sdl;
+		const u8 nlen = static_cast<u8>(std::strlen(nic.name));
+		const u8 alen = nic.mac ? 6 : 0;
+		put8(sdl, 8 + nlen + alen); put8(sdl, 18); put16(sdl, nic.index); put8(sdl, nic.type); put8(sdl, nlen); put8(sdl, alen); put8(sdl, 0);
+		sdl.insert(sdl.end(), nic.name, nic.name + nlen);
+		if (nic.mac) sdl.insert(sdl.end(), host_mac.begin(), host_mac.end());
+		sdl.resize((sdl.size() + 3) & ~3u);
+
+		std::vector<u8> msg;
+		put16(msg, 0); put8(msg, 3); put8(msg, 0x0f); put32(msg, 0x10); put32(msg, nic.flags); put16(msg, nic.index); put16(msg, 0);
+		// if_data (0x88 bytes): type, addrlen, hdrlen, pad, mtu, metric, baudrate, counters
+		put8(msg, nic.type); put8(msg, alen); put8(msg, nic.mac ? 14 : 0); put8(msg, 0); put32(msg, nic.mtu); put32(msg, 0); put32(msg, 100'000'000);
+		msg.resize(16 + 0x88);
+		msg.insert(msg.end(), sdl.begin(), sdl.end());
+		msg[0] = static_cast<u8>(msg.size() >> 8); msg[1] = static_cast<u8>(msg.size());
+		out.insert(out.end(), msg.begin(), msg.end());
+
+		// RTM_NEWADDR (only for configured addresses)
+		if (nic.ip[0] || nic.ip[1] || nic.ip[2] || nic.ip[3])
+		{
+			std::vector<u8> am;
+			put16(am, 0); put8(am, 3); put8(am, 0x0c); put32(am, 0x4 | 0x20); put32(am, 0); put16(am, nic.index); put16(am, 0); put32(am, 0);
+			sockaddr_in(am, nic.mask);
+			sockaddr_in(am, nic.ip);
+			am[0] = static_cast<u8>(am.size() >> 8); am[1] = static_cast<u8>(am.size());
+			out.insert(out.end(), am.begin(), am.end());
+		}
+	}
+
+	return out;
+}
+
 error_code sys_net_bnet_sysctl(ppu_thread& ppu, u32 arg1, u32 arg2, u32 arg3, vm::ptr<void> arg4, u32 arg5, u32 arg6)
 {
 	ppu.state += cpu_flag::wait;
 
 	sys_net.todo("sys_net_bnet_sysctl(0x%x, 0x%x, 0x%x, *0x%x, 0x%x, 0x%x)", arg1, arg2, arg3, arg4, arg5, arg6);
+
+	// (name = arg1, namelen = arg2, oldp = arg3, oldlenp = arg4, newp = arg5, newlen = arg6)
+	if (arg1 && arg2 == 6)
+	{
+		const auto mib = vm::_ptr<const be_t<s32>>(arg1);
+
+		if (mib[0] == 4 /* CTL_NET */ && mib[1] == 17 /* PF_ROUTE */ && mib[4] == 3 /* NET_RT_IFLIST */)
+		{
+			const std::vector<u8> data = net_build_iflist();
+			const auto oldlenp = vm::static_ptr_cast<be_t<u32>>(arg4);
+
+			if (oldlenp)
+			{
+				const u32 capacity = *oldlenp;
+				*oldlenp = static_cast<u32>(data.size());
+
+				if (arg3)
+				{
+					if (capacity < data.size())
+					{
+						return -SYS_NET_ENOMEM;
+					}
+
+					std::memcpy(vm::base(arg3), data.data(), data.size());
+				}
+			}
+
+			return CELL_OK;
+		}
+	}
+
 	return CELL_OK;
 }
 

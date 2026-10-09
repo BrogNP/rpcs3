@@ -710,6 +710,16 @@ namespace np
 		return ether_address;
 	}
 
+	u32 np_handler::get_or_discover_local_ip_addr()
+	{
+		if (!local_ip_addr && !discover_ip_address())
+		{
+			return 0;
+		}
+
+		return local_ip_addr;
+	}
+
 	const std::array<u8, 6>& np_handler::get_ether_addr() const
 	{
 		return ether_address;
