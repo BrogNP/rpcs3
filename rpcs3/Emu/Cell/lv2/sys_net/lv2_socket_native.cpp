@@ -1,4 +1,6 @@
 #include "stdafx.h"
+#include <deque>
+#include <map>
 
 #include "Emu/Cell/lv2/sys_net.h"
 #include "Emu/NP/np_dnshook.h"
@@ -13,6 +15,111 @@ constexpr int invalid_socket = -1;
 #endif
 
 LOG_CHANNEL(sys_net);
+
+// Virtual DHCP server for the firmware DHCP client (the "SceNetDhcp" thread in vsh.elf).
+// The client binds UDP port 68 and broadcasts to 255.255.255.255:67; on a real PS3 a DHCP server on the LAN answers.
+// Here the host network is already configured, so a lease describing the host address is synthesised instead of touching
+// the physical network (port 68 cannot be used on the host anyway). Replies are queued per socket.
+namespace
+{
+	struct virtual_dhcp_t
+	{
+		shared_mutex mtx;
+		std::map<s32, std::deque<std::vector<u8>>> inbox; // keyed by lv2 socket id
+	};
+
+	std::optional<std::vector<u8>> build_dhcp_reply(const std::vector<u8>& req)
+	{
+		if (req.size() < 240 || req[0] != 1 || req[236] != 0x63 || req[237] != 0x82 || req[238] != 0x53 || req[239] != 0x63)
+		{
+			return std::nullopt;
+		}
+
+		u8 msg_type = 0;
+
+		for (usz i = 240; i + 1 < req.size() && req[i] != 255;)
+		{
+			if (req[i] == 0)
+			{
+				i++;
+				continue;
+			}
+
+			if (i + 2 + req[i + 1] > req.size())
+			{
+				break;
+			}
+
+			if (req[i] == 53 && req[i + 1] == 1)
+			{
+				msg_type = req[i + 2];
+			}
+
+			i += 2 + req[i + 1];
+		}
+
+		u8 reply_type = 0;
+		bool give_address = true;
+
+		switch (msg_type)
+		{
+		case 1: reply_type = 2; break; // DISCOVER -> OFFER
+		case 3: reply_type = 5; break; // REQUEST -> ACK
+		case 8: reply_type = 5; give_address = false; break; // INFORM -> ACK
+		default: return std::nullopt; // RELEASE / DECLINE: nothing to answer
+		}
+
+		auto& nph = g_fxo->get<named_thread<np::np_handler>>();
+		const u32 host_ip = nph.get_or_discover_local_ip_addr();
+		const u32 dns_ip = nph.get_dns_ip();
+
+		if (!host_ip)
+		{
+			return std::nullopt;
+		}
+
+		u8 ip[4], gw[4], server[4], mask[4]{255, 255, 255, 0};
+		std::memcpy(ip, &host_ip, 4);
+		std::memcpy(gw, &host_ip, 4);
+		gw[3] = 1;
+		std::memcpy(server, gw, 4);
+
+		std::vector<u8> out(240, 0);
+		out[0] = 2; out[1] = req[1]; out[2] = req[2]; // op=BOOTREPLY, htype, hlen
+		std::memcpy(&out[4], &req[4], 4);     // xid
+		std::memcpy(&out[10], &req[10], 2);   // flags
+		if (give_address) std::memcpy(&out[16], ip, 4); // yiaddr
+		else std::memcpy(&out[12], &req[12], 4);        // ciaddr
+		std::memcpy(&out[20], server, 4);     // siaddr
+		std::memcpy(&out[28], &req[28], 16);  // chaddr
+		out[236] = 0x63; out[237] = 0x82; out[238] = 0x53; out[239] = 0x63;
+
+		const auto opt = [&](u8 code, const void* data, u8 len)
+		{
+			out.push_back(code);
+			out.push_back(len);
+			out.insert(out.end(), static_cast<const u8*>(data), static_cast<const u8*>(data) + len);
+		};
+
+		const be_t<u32> lease_be = 86400;
+		const be_t<u32> t1_be = 43200;
+		const be_t<u32> t2_be = 75600;
+		opt(53, &reply_type, 1);
+		opt(54, server, 4);
+		if (give_address)
+		{
+			opt(51, &lease_be, 4);
+			opt(58, &t1_be, 4);
+			opt(59, &t2_be, 4);
+		}
+		opt(1, mask, 4);
+		opt(3, gw, 4);
+		if (dns_ip) opt(6, &dns_ip, 4);
+		out.push_back(255);
+		while (out.size() < 300) out.push_back(0);
+		return out;
+	}
+}
 
 lv2_socket_native::lv2_socket_native(lv2_socket_family family, lv2_socket_type type, lv2_ip_protocol protocol)
 	: lv2_socket(family, type, protocol)
@@ -155,6 +262,17 @@ s32 lv2_socket_native::bind(const sys_net_sockaddr& addr)
 	if (feign_tcp_conn_failure)
 	{
 		sys_net.error("Calling socket::bind() from a previously connected socket!");
+	}
+
+	if (type == SYS_NET_SOCK_DGRAM && psa_in->sin_port == 68)
+	{
+		// DHCP client port: answered by the virtual DHCP server, not bound on the host
+		sys_net.notice("[Native] Virtual DHCP: socket %d bound to port 68 (served by the built-in DHCP server)", lv2_id);
+		auto& dhcp = g_fxo->get<virtual_dhcp_t>();
+		std::lock_guard dlock(dhcp.mtx);
+		dhcp.inbox[lv2_id];
+		last_bound_addr = addr;
+		return CELL_OK;
 	}
 
 	::sockaddr_in native_addr{};
@@ -907,6 +1025,39 @@ std::optional<std::tuple<s32, std::vector<u8>, sys_net_sockaddr>> lv2_socket_nat
 	::socklen_t native_addrlen = sizeof(native_addr);
 	std::vector<u8> res_buf(len);
 
+	{
+		auto& dhcp = g_fxo->get<virtual_dhcp_t>();
+		std::lock_guard dlock(dhcp.mtx);
+
+		if (const auto it = dhcp.inbox.find(lv2_id); it != dhcp.inbox.end())
+		{
+			if (it->second.empty())
+			{
+				return {{-SYS_NET_EWOULDBLOCK, {}, {}}};
+			}
+
+			std::vector<u8> pkt = std::move(it->second.front());
+			it->second.pop_front();
+
+			pkt.resize(std::min<usz>(pkt.size(), len));
+
+			sys_net_sockaddr_in server{};
+			server.sin_len = sizeof(server);
+			server.sin_family = SYS_NET_AF_INET;
+			server.sin_port = 67;
+			u32 host_ip = g_fxo->get<named_thread<np::np_handler>>().get_or_discover_local_ip_addr();
+			u8 octets[4];
+			std::memcpy(octets, &host_ip, 4);
+			octets[3] = 1;
+			std::memcpy(&host_ip, octets, 4);
+			server.sin_addr = std::bit_cast<be_t<u32>, u32>(host_ip);
+
+			sys_net_sockaddr sn_addr{};
+			std::memcpy(&sn_addr, &server, sizeof(server));
+			return {{::narrow<s32>(pkt.size()), std::move(pkt), sn_addr}};
+		}
+	}
+
 	auto& dnshook = g_fxo->get<np::dnshook>();
 	if (dnshook.is_dns(lv2_id) && dnshook.is_dns_queue(lv2_id))
 	{
@@ -975,6 +1126,22 @@ std::optional<s32> lv2_socket_native::sendto(s32 flags, const std::vector<u8>& b
 	if (is_lock)
 	{
 		lock.lock();
+	}
+
+	{
+		auto& dhcp = g_fxo->get<virtual_dhcp_t>();
+		std::lock_guard dlock(dhcp.mtx);
+
+		if (const auto it = dhcp.inbox.find(lv2_id); it != dhcp.inbox.end())
+		{
+			if (const auto reply = build_dhcp_reply(buf))
+			{
+				sys_net.notice("[Native] Virtual DHCP: answering message type %u with a lease for the host address", (*reply)[242]);
+				it->second.push_back(*reply);
+			}
+
+			return ::size32(buf);
+		}
 	}
 
 	int native_flags                       = 0;
@@ -1101,6 +1268,12 @@ void lv2_socket_native::close()
 {
 	std::lock_guard lock(mutex);
 
+	if (auto dhcp = g_fxo->try_get<virtual_dhcp_t>())
+	{
+		std::lock_guard dlock(dhcp->mtx);
+		dhcp->inbox.erase(lv2_id);
+	}
+
 	np::close_socket(native_socket);
 	native_socket = {};
 
@@ -1161,6 +1334,21 @@ void lv2_socket_native::poll(sys_net_pollfd& sn_pfd, pollfd& native_pfd)
 		sys_net.warning("sys_net_bnet_poll(fd=%d): events=0x%x", sn_pfd.fd, sn_pfd.events);
 	}
 
+	{
+		auto& dhcp = g_fxo->get<virtual_dhcp_t>();
+		std::lock_guard dlock(dhcp.mtx);
+
+		if (const auto it = dhcp.inbox.find(lv2_id); it != dhcp.inbox.end())
+		{
+			if ((sn_pfd.events & SYS_NET_POLLIN) && !it->second.empty())
+			{
+				sn_pfd.revents |= SYS_NET_POLLIN;
+			}
+
+			return;
+		}
+	}
+
 	native_pfd.fd = native_socket;
 
 	if (sn_pfd.events & SYS_NET_POLLIN)
@@ -1175,6 +1363,16 @@ void lv2_socket_native::poll(sys_net_pollfd& sn_pfd, pollfd& native_pfd)
 
 std::tuple<bool, bool, bool> lv2_socket_native::select(bs_t<lv2_socket::poll_t> selected, pollfd& native_pfd)
 {
+	{
+		auto& dhcp = g_fxo->get<virtual_dhcp_t>();
+		std::lock_guard dlock(dhcp.mtx);
+
+		if (const auto it = dhcp.inbox.find(lv2_id); it != dhcp.inbox.end())
+		{
+			return {(selected & lv2_socket::poll_t::read) && !it->second.empty(), !!(selected & lv2_socket::poll_t::write), false};
+		}
+	}
+
 	native_pfd.fd = native_socket;
 	if (selected & lv2_socket::poll_t::read)
 	{

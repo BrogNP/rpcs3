@@ -1195,15 +1195,23 @@ error_code sys_net_bnet_socket(ppu_thread& ppu, lv2_socket_family family, lv2_so
 		sys_net.error("sys_net_bnet_socket(): unknown family (%d)", family);
 	}
 
-	if (type != SYS_NET_SOCK_STREAM && type != SYS_NET_SOCK_DGRAM && type != SYS_NET_SOCK_RAW && type != SYS_NET_SOCK_DGRAM_P2P && type != SYS_NET_SOCK_STREAM_P2P)
+	// Type 7 is created by the firmware DHCP client next to its UDP socket (interface notifications); no data is ever delivered
+	const bool is_firmware_type7 = static_cast<s32>(type) == 7;
+
+	if (!is_firmware_type7 && type != SYS_NET_SOCK_STREAM && type != SYS_NET_SOCK_DGRAM && type != SYS_NET_SOCK_RAW && type != SYS_NET_SOCK_DGRAM_P2P && type != SYS_NET_SOCK_STREAM_P2P)
 	{
 		sys_net.error("sys_net_bnet_socket(): unsupported type (%d)", type);
+		sys_net.error("  caller: %s", ppu.dump_callstack());
 		return -SYS_NET_EPROTONOSUPPORT;
 	}
 
 	shared_ptr<lv2_socket> sock_lv2;
 
-	switch (type)
+	if (is_firmware_type7)
+	{
+		sock_lv2 = make_shared<lv2_socket_raw>(family, type, protocol);
+	}
+	else switch (type)
 	{
 	case SYS_NET_SOCK_STREAM:
 	case SYS_NET_SOCK_DGRAM:
@@ -2190,17 +2198,18 @@ error_code sys_net_bnet_sysctl(ppu_thread& ppu, u32 arg1, u32 arg2, u32 arg3, vm
 	if (arg1 && arg2 == 6)
 	{
 		const auto mib = vm::_ptr<const be_t<s32>>(arg1);
-		sys_net.notice("sys_net_bnet_sysctl(): mib = {%d, %d, %d, %d, %d, %d} oldp=0x%x oldlenp=%u", mib[0], mib[1], mib[2], mib[3], mib[4], mib[5], arg3, arg4 ? +*vm::static_ptr_cast<be_t<u32>>(arg4) : 0u);
+		sys_net.notice("sys_net_bnet_sysctl(): mib = {%d, %d, %d, %d, %d, %d} oldp=0x%x oldlenp=%llu", mib[0], mib[1], mib[2], mib[3], mib[4], mib[5], arg3, arg4 ? +*vm::static_ptr_cast<be_t<u64>>(arg4) : u64{0});
 
 		if (mib[0] == 4 /* CTL_NET */ && mib[1] == 17 /* PF_ROUTE */ && mib[4] == 4 /* NET_RT_IFLIST (NetBSD numbering: 3 is the old format) */)
 		{
 			const std::vector<u8> data = net_build_iflist();
-			const auto oldlenp = vm::static_ptr_cast<be_t<u32>>(arg4);
+			const auto oldlenp = vm::static_ptr_cast<be_t<u64>>(arg4); // size_t is 64-bit on the guest
+			sys_net.notice("sys_net_bnet_sysctl(): NET_RT_IFLIST -> %u bytes (oldlenp=0x%x)", data.size(), arg4.addr());
 
 			if (oldlenp)
 			{
-				const u32 capacity = *oldlenp;
-				*oldlenp = static_cast<u32>(data.size());
+				const u64 capacity = *oldlenp;
+				*oldlenp = static_cast<u64>(data.size());
 
 				if (arg3)
 				{
