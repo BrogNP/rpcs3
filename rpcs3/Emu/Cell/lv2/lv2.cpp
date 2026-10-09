@@ -557,10 +557,10 @@ const std::array<std::pair<ppu_intrp_func_t, std::string_view>, 1024> g_ppu_sysc
 	NULL_FUNC(sys_hid_manager_unmap_logical_id_to_port_id), //505 (0x1F9)  ROOT
 	BIND_SYSC(sys_hid_manager_add_hot_key_observer),        //506 (0x1FA)  ROOT
 	NULL_FUNC(sys_hid_manager_remove_hot_key_observer),     //507 (0x1FB)  ROOT
-	NULL_FUNC(sys_hid_manager_grab_focus),                  //508 (0x1FC)  ROOT
-	NULL_FUNC(sys_hid_manager_release_focus),               //509 (0x1FD)  ROOT
+	BIND_SYSC(sys_hid_manager_grab_focus),                  //508 (0x1FC)  ROOT
+	BIND_SYSC(sys_hid_manager_release_focus),               //509 (0x1FD)  ROOT
 	BIND_SYSC(sys_hid_manager_check_focus),                 //510 (0x1FE)
-	NULL_FUNC(sys_hid_manager_set_master_process),          //511 (0x1FF)  ROOT
+	BIND_SYSC(sys_hid_manager_set_master_process),          //511 (0x1FF)  ROOT
 	BIND_SYSC(sys_hid_manager_is_process_permission_root),  //512 (0x200)  ROOT
 	BIND_SYSC(sys_hid_manager_513),                         //513 (0x201)
 	BIND_SYSC(sys_hid_manager_514),                         //514 (0x202)

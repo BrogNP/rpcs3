@@ -137,11 +137,42 @@ error_code sys_hid_manager_ioctl(u32 hid_handle, u32 pkg_id, vm::ptr<void> buf, 
 	return CELL_OK;
 }
 
+error_code sys_hid_manager_grab_focus(u32 pid)
+{
+	sys_hid.success("sys_hid_manager_grab_focus(pid=0x%x)", pid);
+
+	// VSH taking focus puts it in front of the game (xmb-ingame)
+	vsh_focus::set_vsh_in_front(pid == lv2_process::id_base);
+
+	return CELL_OK;
+}
+
+error_code sys_hid_manager_release_focus(u32 pid)
+{
+	sys_hid.success("sys_hid_manager_release_focus(pid=0x%x)", pid);
+
+	// VSH giving focus up hands it back to the game
+	if (pid == lv2_process::id_base)
+	{
+		vsh_focus::set_vsh_in_front(false);
+	}
+
+	return CELL_OK;
+}
+
+error_code sys_hid_manager_set_master_process(u32 pid, u32 unk)
+{
+	sys_hid.todo("sys_hid_manager_set_master_process(pid=0x%x, unk=0x%x)", pid, unk);
+
+	return CELL_OK;
+}
+
 error_code sys_hid_manager_check_focus()
 {
 	// spammy sys_hid.todo("sys_hid_manager_check_focus()");
 
-	return not_an_error(1);
+	// Tells the calling process whether it owns the pad focus
+	return not_an_error(vsh_focus::foreground_process() == id_manager::g_process ? 1 : 0);
 }
 
 error_code sys_hid_manager_513(u64 a1, u64 a2, vm::ptr<void> buf, u64 buf_size)

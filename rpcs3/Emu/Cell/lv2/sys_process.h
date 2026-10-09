@@ -216,6 +216,9 @@ namespace vsh_focus
 	// Process that currently gets the display and pad input
 	u32 foreground_process();
 
+	// Put VSH in front of the game (or the game back in front). Returns false if no game is running under VSH
+	bool set_vsh_in_front(bool in_front);
+
 	// Flip between VSH and the game. Returns false if no game is running under VSH
 	bool toggle();
 }

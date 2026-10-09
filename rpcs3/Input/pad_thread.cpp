@@ -691,13 +691,20 @@ void pad_thread::operator()()
 			}
 
 			// Make sure we call this function only once per button press
-			if ((ps_button_pressed && !m_ps_button_pressed) || pad::g_home_menu_requested.exchange(false))
+			const bool ps_button_edge = ps_button_pressed && !m_ps_button_pressed;
+			const bool home_menu_requested = pad::g_home_menu_requested.exchange(false);
+
+			if (vsh_focus::g_game_process != u32{umax})
 			{
-				// With a game running under VSH, this swaps the screen and the pad between the game and the XMB
-				if (!vsh_focus::toggle())
+				// VSH handles the PS button itself (grab_focus / release_focus), the hotkey is a manual override
+				if (home_menu_requested)
 				{
-					open_home_menu();
+					vsh_focus::toggle();
 				}
+			}
+			else if (ps_button_edge || home_menu_requested)
+			{
+				open_home_menu();
 			}
 
 			m_ps_button_pressed = ps_button_pressed;

@@ -1005,13 +1005,21 @@ namespace vsh_focus
 
 	bool toggle()
 	{
+		return set_vsh_in_front(!g_vsh_in_front.load());
+	}
+
+	bool set_vsh_in_front(bool vsh_in_front)
+	{
 		if (g_game_process == umax)
 		{
 			return false;
 		}
 
-		const bool vsh_in_front = !g_vsh_in_front.load();
-		g_vsh_in_front = vsh_in_front;
+		if (g_vsh_in_front.exchange(vsh_in_front) == vsh_in_front)
+		{
+			return true;
+		}
+
 		sys_process.success("Foreground process: %s", vsh_in_front ? "VSH" : "game");
 
 		// Make the RSX thread pick the context of the new foreground process (decide_rsx_context_queue only runs on this interrupt)

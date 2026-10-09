@@ -61,6 +61,9 @@ struct lv2_hidio_handle
 error_code sys_hid_manager_open(ppu_thread& ppu, u8 device_type, u8 port_no, vm::ptr<u32> handle);
 error_code sys_hid_manager_ioctl(u32 hid_handle, u32 pkg_id, vm::ptr<void> buf, u64 buf_size);
 error_code sys_hid_manager_add_hot_key_observer(u32 event_queue, vm::ptr<u32> unk);
+error_code sys_hid_manager_grab_focus(u32 pid);
+error_code sys_hid_manager_release_focus(u32 pid);
+error_code sys_hid_manager_set_master_process(u32 pid, u32 unk);
 error_code sys_hid_manager_check_focus();
 error_code sys_hid_manager_is_process_permission_root(u32 pid);
 error_code sys_hid_manager_513(u64 a1, u64 a2, vm::ptr<void> buf, u64 buf_size);
