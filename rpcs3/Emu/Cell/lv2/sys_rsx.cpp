@@ -118,7 +118,15 @@ bool rsx::thread::send_event(lv2_rsx_context* context, u64 data1, u64 event_flag
 {
 	// Filter event bits, send them only if they are masked by gcm
 	// Except the upper 32-bits, they are reserved for unmapped io events and execute unconditionally
+	const u64 requested_flags = event_flags;
 	event_flags &= vm::_ref<RsxDriverInfo>(context->driver_info).handlers | 0xffff'ffffull << 32;
+
+	// diagnostic: first few deliveries per process, with mask and port result
+	static atomic_t<u32> s_diag_count[8]{};
+	const u32 diag_proc = id_manager::g_process;
+	const bool diag = diag_proc == 0x1000000 && vsh_focus::g_vsh_in_front && s_diag_count[0].fetch_op([](u32& v){ if (v >= 40) return false; v++; return true; }).second;
+
+	if (diag && !event_flags) sys_rsx.warning("DIAG send_event: process=0x%x requested=0x%x handlers=0x%x -> masked out", diag_proc, requested_flags, +vm::_ref<RsxDriverInfo>(context->driver_info).handlers);
 
 	if (!event_flags)
 	{
@@ -127,6 +135,7 @@ bool rsx::thread::send_event(lv2_rsx_context* context, u64 data1, u64 event_flag
 	}
 
 	auto error = sys_event_port_send(context->rsx_event_port, data1, event_flags, data3);
+	if (diag) sys_rsx.warning("DIAG send_event: process=0x%x requested=0x%x handlers=0x%x sent=0x%x port=0x%x -> error=0x%x", diag_proc, requested_flags, +vm::_ref<RsxDriverInfo>(context->driver_info).handlers, event_flags, context->rsx_event_port, +error);
 
 	while (error + 0u == CELL_EBUSY)
 	{
