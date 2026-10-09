@@ -1,6 +1,9 @@
 #include "stdafx.h"
 #include "lv2_socket.h"
 #include "network_context.h"
+#include "Emu/IdManager.h"
+#include "Emu/Cell/PPUThread.h"
+#include "Emu/Cell/lv2/sys_process.h"
 
 LOG_CHANNEL(sys_net);
 
@@ -67,7 +70,25 @@ void lv2_socket::set_poll_event(bs_t<lv2_socket::poll_t> event)
 void lv2_socket::poll_queue(shared_ptr<ppu_thread> ppu, bs_t<lv2_socket::poll_t> event, std::function<bool(bs_t<lv2_socket::poll_t>)> poll_cb)
 {
 	set_poll_event(event);
-	queue.emplace_back(std::move(ppu), poll_cb);
+
+	// The callbacks run on the network thread, which belongs to no process: guest pointers captured by a callback (recv buffers,
+	// fd sets, ...) must be resolved in the address space of the process the waiting PPU thread belongs to.
+	const u32 proc_id = ppu ? +ppu->proc_id : 0;
+
+	queue.emplace_back(std::move(ppu), [proc_id, poll_cb = std::move(poll_cb)](bs_t<lv2_socket::poll_t> events) -> bool
+	{
+		if (proc_id && !cpu_thread::get_current())
+		{
+			const u32 old_process = id_manager::g_process;
+			const auto vm_scope = lv2_process::acquire_globals(proc_id);
+			id_manager::g_process = proc_id;
+			const bool result = poll_cb(events);
+			id_manager::g_process = old_process;
+			return result;
+		}
+
+		return poll_cb(events);
+	});
 
 	// Makes sure network_context thread is awaken
 	if (type == SYS_NET_SOCK_STREAM || type == SYS_NET_SOCK_DGRAM)
