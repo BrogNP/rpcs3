@@ -32,6 +32,13 @@ namespace rsx
 			const auto& sema = vm::_ref<RsxSemaphore>(addr);
 			const auto& atomic_sema = vm::_ref<atomic_t<RsxSemaphore>>(addr);
 
+			if (addr == RSX(ctx)->lv2_rsx_process->device_addr[8] + 0x30)
+			{
+				// HW flip synchronization is emulated as always complete (see semaphore_release), never stall on it.
+				// A context that was switched out mid-frame (ie. VSH under a game) would otherwise wait out the driver timeout on every frame
+				return;
+			}
+
 			if (sema == arg)
 			{
 				// Flip semaphore doesnt need wake-up delay
