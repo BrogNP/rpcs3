@@ -3797,6 +3797,11 @@ namespace rsx
 
 		int_flip_index += flip_notification_count;
 
+		if (static atomic_t<u32> s_flip_diag = 0; !isHLE && vsh_focus::g_vsh_in_front && s_flip_diag.fetch_op([](u32& v){ return v < 30 && ++v; }).second)
+		{
+			rsx_log.warning("DIAG flip: context=0x%x process=0x%x buffer=%u disp_buffers=%u skip=%d", lv2_context_id, +id_manager::g_process, buffer, lv2_context->display_buffers_count, +m_queued_flip.skip_frame);
+		}
+
 		lv2_context->current_display_buffer = buffer;
 		m_queued_flip.emu_flip = true;
 		m_queued_flip.in_progress = true;
