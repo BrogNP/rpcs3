@@ -747,6 +747,22 @@ error_code sys_event_port_connect_ipc(ppu_thread& ppu, u32 eport_id, u64 ipc_key
 
 	auto queue = lv2_event_queue::find(ipc_key);
 
+	// HACK: 0x8000cafe0246fab4 is the well-known ipc_key libaudio_internal polls for, expecting
+	// sys_audio.self (spawned as a separate process on old firmwares) to create it once ready.
+	// _sys_process_spawn is a no-op (RPCS3 has no real multi-process support), so that queue never
+	// gets created and VSH spins on "waiting for audio server process ready" forever - fake it here.
+	if (!queue && ipc_key == 0x8000cafe0246fab4ull)
+	{
+		sys_event.warning("sys_event_port_connect_ipc(): faking missing audio-server-ready queue for ipc_key=0x%x", ipc_key);
+
+		lv2_obj::create<lv2_event_queue>(SYS_SYNC_PROCESS_SHARED, ipc_key, SYS_SYNC_NEWLY_CREATED, [&]()
+		{
+			return make_shared<lv2_event_queue>(SYS_SYNC_FIFO, SYS_PPU_QUEUE, 1, 0, ipc_key);
+		});
+
+		queue = lv2_event_queue::find(ipc_key);
+	}
+
 	std::lock_guard lock(id_manager::g_mutex);
 
 	const auto port = idm::check_unlocked<lv2_obj, lv2_event_port>(eport_id);

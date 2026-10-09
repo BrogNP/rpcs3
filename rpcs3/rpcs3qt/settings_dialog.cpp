@@ -1322,6 +1322,10 @@ settings_dialog::settings_dialog(std::shared_ptr<gui_settings> gui_settings, std
 	EnhanceSlider(emu_settings_type::MaximumCacheSize, ui->maximumCacheSize, ui->maximumCacheSizeLabel, tr("Maximum size: %0 MB", "Maximum cache size"));
 	ui->maximumCacheSize->setEnabled(ui->enableCacheClearing->isChecked());
 
+	// Spinboxes
+
+	m_emu_settings->EnhanceSpinBox(ui->sb_hdd0_size, emu_settings_type::Hdd0SizeGB);
+
 	// Radio Buttons
 
 	// creating this in ui file keeps scrambling the order...

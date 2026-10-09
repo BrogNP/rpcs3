@@ -129,6 +129,22 @@ log_frame::log_frame(std::shared_ptr<gui_settings> _gui_settings, QWidget* paren
 	m_log->document()->setMaximumBlockCount(max_block_count_log);
 	m_log->installEventFilter(this);
 
+	m_log_filter_input = new QLineEdit();
+	m_log_filter_input->setPlaceholderText(tr("Filter (e.g. net)"));
+	m_log_filter_input->setClearButtonEnabled(true);
+	connect(m_log_filter_input, &QLineEdit::textChanged, this, [this](const QString& text)
+	{
+		m_log_filter_text = text;
+	});
+
+	QVBoxLayout* log_layout = new QVBoxLayout();
+	log_layout->addWidget(m_log);
+	log_layout->addWidget(m_log_filter_input);
+	log_layout->setContentsMargins(0, 0, 0, 0);
+
+	QWidget* log_container = new QWidget();
+	log_container->setLayout(log_layout);
+
 	m_tty = new QPlainTextEdit(m_tabWidget);
 	m_tty->setObjectName(QStringLiteral("tty_frame"));
 	m_tty->setReadOnly(true);
@@ -154,7 +170,7 @@ log_frame::log_frame(std::shared_ptr<gui_settings> _gui_settings, QWidget* paren
 	m_tty_container = new QWidget();
 	m_tty_container->setLayout(tty_layout);
 
-	m_tabWidget->addTab(m_log, tr("Log"));
+	m_tabWidget->addTab(log_container, tr("Log"));
 	m_tabWidget->addTab(m_tty_container, tr("TTY"));
 
 	setWidget(m_tabWidget);
@@ -896,8 +912,8 @@ void log_frame::UpdateUI()
 	// Check main logs
 	while (auto* packet = s_gui_listener.get())
 	{
-		// Confirm log level
-		if (packet->sev <= s_gui_listener.enabled)
+		// Confirm log level and optional text filter
+		if (packet->sev <= s_gui_listener.enabled && (m_log_filter_text.isEmpty() || QString::fromStdString(packet->msg).contains(m_log_filter_text, Qt::CaseInsensitive)))
 		{
 			// Check if we can stack this log message.
 			if (m_stack_log && m_old_log_level == packet->sev && packet->msg == m_old_log_text)

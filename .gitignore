@@ -30,6 +30,8 @@
 *.dump
 *.wav
 
+
+/.claude
 /build
 /build-*
 /lib

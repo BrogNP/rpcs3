@@ -2038,6 +2038,22 @@
                 </widget>
                </item>
                <item>
+                <widget class="QGroupBox" name="gb_Hdd0Size">
+                 <property name="title">
+                  <string>Virtual HDD Size</string>
+                 </property>
+                 <layout class="QVBoxLayout" name="gb_Hdd0Size_layout">
+                  <item>
+                   <widget class="QSpinBox" name="sb_hdd0_size">
+                    <property name="suffix">
+                     <string> GB</string>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item>
                 <spacer name="systemTabLeftVerticalSpacer">
                  <property name="orientation">
                   <enum>Qt::Orientation::Vertical</enum>

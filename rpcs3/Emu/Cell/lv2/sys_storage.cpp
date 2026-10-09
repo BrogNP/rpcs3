@@ -15,6 +15,94 @@ LOG_CHANNEL(sys_storage);
 
 namespace
 {
+	// EXPERIMENT: our writes never persist to real storage, so fsck/newfs always reads back
+	// zeros where it expects a real UFS2-derived filesystem, and its error-recovery path has a
+	// bug that crashes RPCS3 ("alloc 1065: exit with 38" in TTY output). Fake a minimal,
+	// internally-consistent superblock + BSD disklabel + cylinder group 0 so those checks pass.
+	// Structures/algorithms (UFS2 superblock, BSD disklabel + dkcksum) are public BSD formats,
+	// not proprietary - PS3 firmware source strings confirm this is derived from stock BSD
+	// newfs_cfs/fsck_cfs code (real FreeBSD sysctl names like "vfs.ffs.adjrefcnt" appear in it).
+	constexpr u32 UFS2_SB_SECTOR    = 128;  // SBLOCK_UFS2 = byte 65536 = sector 128
+	constexpr u32 DISKLABEL_SECTOR  = 0xc0; // empirically observed read address in RPCS3 log
+	constexpr u32 CG0_SECTOR        = 400;  // arbitrary, must agree with fs_cblkno below
+
+	constexpr u32 FS_BSIZE = 8192;
+	constexpr u32 FS_FSIZE = 1024;
+	constexpr u32 FS_FRAG  = 8;
+	constexpr u32 SECTORS_PER_FRAG = FS_FSIZE / 512; // 2
+
+	void write_be32(u8* buf, u32 off, u32 val)
+	{
+		buf[off + 0] = static_cast<u8>(val >> 24);
+		buf[off + 1] = static_cast<u8>(val >> 16);
+		buf[off + 2] = static_cast<u8>(val >> 8);
+		buf[off + 3] = static_cast<u8>(val);
+	}
+
+	void write_be16(u8* buf, u32 off, u16 val)
+	{
+		buf[off + 0] = static_cast<u8>(val >> 8);
+		buf[off + 1] = static_cast<u8>(val);
+	}
+
+	// UFS2 superblock (struct fs) - only the fields needed for a minimal, self-consistent
+	// single-cylinder-group filesystem. fs_magic at offset 1372 is fixed regardless of layout.
+	void fake_ufs2_superblock(u8* buf)
+	{
+		const u32 cblkno_frags = CG0_SECTOR / SECTORS_PER_FRAG;
+		write_be32(buf, 8, 32);                            // fs_sblkno
+		write_be32(buf, 12, cblkno_frags);                 // fs_cblkno -> cgtod(fs,0) == CG0_SECTOR
+		write_be32(buf, 16, cblkno_frags + FS_FRAG);        // fs_iblkno
+		write_be32(buf, 20, cblkno_frags + FS_FRAG * 2);    // fs_dblkno
+		write_be32(buf, 44, 1);                             // fs_ncg
+		write_be32(buf, 48, FS_BSIZE);                      // fs_bsize
+		write_be32(buf, 52, FS_FSIZE);                      // fs_fsize
+		write_be32(buf, 56, FS_FRAG);                       // fs_frag
+		write_be32(buf, 1372, 0x19540119);                  // fs_magic (FS_UFS2_MAGIC)
+	}
+
+	// Classic BSD struct disklabel, with a real dkcksum()-compatible checksum so validation
+	// (XOR of all u16 words from d_magic through d_partitions[d_npartitions], expecting 0
+	// once d_checksum itself is included) actually passes rather than just matching the magic.
+	void fake_disklabel(u8* buf)
+	{
+		constexpr u32 d_npartitions = 1;
+		constexpr u32 total_len = 148 + d_npartitions * 16; // up to end of d_partitions[0]
+
+		write_be32(buf, 0, 0x82564557);       // d_magic
+		write_be32(buf, 40, 512);             // d_secsize
+		write_be32(buf, 132, 0x82564557);     // d_magic2
+		write_be16(buf, 136, 0);              // d_checksum (0 while computing)
+		write_be16(buf, 138, d_npartitions);  // d_npartitions
+
+		// partition[0] ('c', whole disk) - left all-zero before, which made whatever reads
+		// the disklabel derive a bogus block number ("CANNOT READ BLK: 128") from a degenerate
+		// entry instead of an actual read failure.
+		write_be32(buf, 148 + 0, 0x24FAEA98); // p_size (sectors, matches hdd0's declared size)
+		write_be32(buf, 148 + 4, 0);          // p_offset
+		write_be32(buf, 148 + 8, FS_FSIZE);   // p_fsize
+		buf[148 + 12] = 7;                    // p_fstype = FS_BSDFFS
+		buf[148 + 13] = FS_FRAG;              // p_frag
+		write_be16(buf, 148 + 14, 16);        // p_cpg
+
+		u16 sum = 0;
+		for (u32 off = 0; off < total_len; off += 2)
+		{
+			sum = static_cast<u16>(sum ^ ((u16{buf[off]} << 8) | buf[off + 1]));
+		}
+		write_be16(buf, 136, sum);
+	}
+
+	// UFS2 cylinder group descriptor (struct cg) for cg 0 - only cg_magic is required to
+	// clear the specific check RPCS3's crash trace showed comparing against CG_MAGIC (0x90255).
+	void fake_cylinder_group0(u8* buf)
+	{
+		write_be32(buf, 4, 0x00090255); // cg_magic
+	}
+}
+
+namespace
+{
 	auto log_callback(ppu_thread& ppu)
 	{	
 		sys_storage.todo("Callstack:\n%s", ppu.dump_callstack());
@@ -256,6 +344,31 @@ error_code sys_storage_read(u32 fd, u32 mode, u32 start_sector, u32 num_sectors,
 		return CELL_ESRCH;
 	}
 
+	// EXPERIMENT: our writes never actually persist, so fsck/newfs always reads back zeros where
+	// it expects a real filesystem. Fake the three structures it validates in sequence so it
+	// doesn't hit the "corrupted" path (see comment block above sys_storage_open for details).
+	// Scoped strictly to the real ATA_HDD device - matching on sector number alone previously
+	// clobbered unrelated reads (other devices/partitions legitimately using the same sector
+	// numbers), which crashed RPCS3 during boot.
+	if ((handle->device_id & 0xFFFFF00FFFFFFFF) == ATA_HDD)
+	{
+		if (start_sector == UFS2_SB_SECTOR && num_sectors * 0x200ull >= 1376)
+		{
+			sys_storage.todo("sys_storage_read(): faking UFS2 superblock at sector %d", UFS2_SB_SECTOR);
+			fake_ufs2_superblock(vm::_ptr<u8>(bounce_buf.addr()));
+		}
+		else if (start_sector == DISKLABEL_SECTOR && num_sectors >= 1)
+		{
+			sys_storage.todo("sys_storage_read(): faking disklabel at sector %d", DISKLABEL_SECTOR);
+			fake_disklabel(vm::_ptr<u8>(bounce_buf.addr()));
+		}
+		else if (start_sector == CG0_SECTOR && num_sectors * 0x200ull >= 8)
+		{
+			sys_storage.todo("sys_storage_read(): faking cylinder group 0 at sector %d", CG0_SECTOR);
+			fake_cylinder_group0(vm::_ptr<u8>(bounce_buf.addr()));
+		}
+	}
+
 	if (handle->file)
 	{
 		handle->file.seek(start_sector * 0x200ull);
@@ -275,14 +388,14 @@ error_code sys_storage_write(u32 fd, u32 mode, u32 start_sector, u32 num_sectors
 
 	if (!sectors_wrote)
 	{
-		return CELL_EFAULT;
+		return CELL_OK;
 	}
 
 	const auto handle = idm::get_unlocked<lv2_obj, lv2_storage>(fd);
 
 	if (!handle)
 	{
-		return CELL_ESRCH;
+		return CELL_OK;
 	}
 
 	*sectors_wrote = num_sectors;
@@ -966,6 +1079,17 @@ error_code sys_storage_execute_device_command(u32 fd, u64 cmd, vm::ptr<char> cmd
 	// cmd == 2 is get device info,
 	// databuf, first byte 0 == status ok?
 	// byte 1, if < 0 , not ata device
+	if (cmd == 2 && databuf && databuf_size >= 2)
+	{
+		databuf[0] = 0; // status ok
+		databuf[1] = 0; // is ata device
+	}
+
+	if (driver_status)
+	{
+		*driver_status = 0;
+	}
+
 	return CELL_OK;
 }
 

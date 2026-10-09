@@ -50,6 +50,7 @@
 #include "sys_sm.h"
 #include "sys_storage.h"
 #include "sys_uart.h"
+#include "sys_usbbtaudio.h"
 #include "sys_crypto_engine.h"
 #include "sys_bluetooth.h"
 
@@ -685,7 +686,7 @@ const std::array<std::pair<ppu_intrp_func_t, std::string_view>, 1024> g_ppu_sysc
 	null_func,//BIND_SYSC(sys_...),                         //638 (0x27E)
 
 	null_func,//BIND_SYSC(sys...),                          //639  DEPRECATED
-	NULL_FUNC(sys_usbbtaudio_initialize),                   //640  DEPRECATED
+	BIND_SYSC(sys_usbbtaudio_initialize),                   //640  DEPRECATED
 	NULL_FUNC(sys_usbbtaudio_finalize),                     //641  DEPRECATED
 	NULL_FUNC(sys_usbbtaudio_discovery),                    //642  DEPRECATED
 	NULL_FUNC(sys_usbbtaudio_cancel_discovery),             //643  DEPRECATED

@@ -54,6 +54,8 @@ private:
 	std::vector<QColor> m_color;
 	QColor m_color_stack;
 	QPlainTextEdit* m_log = nullptr;
+	QLineEdit* m_log_filter_input = nullptr;
+	QString m_log_filter_text;
 	std::string m_old_log_text;
 	QString m_old_tty_text;
 	QString m_log_text;

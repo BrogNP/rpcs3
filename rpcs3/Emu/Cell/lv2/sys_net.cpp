@@ -1997,6 +1997,16 @@ error_code sys_net_control(ppu_thread& ppu, u32 arg1, s32 arg2, vm::ptr<void> ar
 	ppu.state += cpu_flag::wait;
 
 	sys_net.todo("sys_net_control(0x%x, %d, *0x%x, %d)", arg1, arg2, arg3, arg4);
+
+	// EXPERIMENT: VSH's network status screen calls this expecting a small output value
+	// (arg4 is the expected size, seen as 4 bytes). Report "connected" (1) instead of
+	// leaving the buffer untouched, which reads as zero/garbage to VSH.
+	if (arg3 && arg4 == 4)
+	{
+		sys_net.todo("sys_net_control(): faking connected status for cmd=0x%x", arg2);
+		*vm::_ptr<u32>(arg3.addr()) = 1;
+	}
+
 	return CELL_OK;
 }
 
@@ -2004,7 +2014,40 @@ error_code sys_net_bnet_ioctl(ppu_thread& ppu, s32 arg1, u32 arg2, u32 arg3)
 {
 	ppu.state += cpu_flag::wait;
 
-	sys_net.todo("sys_net_bnet_ioctl(%d, 0x%x, 0x%x)", arg1, arg2, arg3);
+	sys_net.todo("sys_net_bnet_ioctl(%d, 0x%x, 0x%x) called from cia=0x%x", arg1, arg2, arg3, ppu.cia);
+
+	// BSD-style ioctl encoding: bits 16-28 = transfer size, bits 8-15 = group, bits 0-7 = command number
+	const u32 io_size  = (arg2 >> 16) & 0x1fff;
+	const u32 io_group = (arg2 >> 8) & 0xff;
+	const u32 io_num   = arg2 & 0xff;
+	const bool io_out  = (arg2 & 0x40000000) != 0;
+
+	// DIAGNOSTIC: dump whatever VSH gave us on the network-interface group before we touch it,
+	// so we can see what fields it's actually sending (interface name/id etc.) instead of guessing blind.
+	if (arg3 && io_group == 'i' && io_size > 0 && io_size <= 528)
+	{
+		sys_net.todo("sys_net_bnet_ioctl(): group='i' cmd=%d size=%d in_data=%s", io_num, io_size, fmt::buf_to_hexstring(vm::_ptr<u8>(arg3), io_size));
+	}
+
+	// VSH's network status screen queries group 'i' (interface), commands 17 and 140 are both
+	// IN+OUT (VSH reads our response) - command 16 is IN-only (VSH writes to us, nothing to fill).
+	// Confirmed via hex dump: bytes 0-15 are the interface name ("eth0"/"lo0") VSH sent as input -
+	// likely echoed/validated by VSH, so it must be preserved, not overwritten like the first attempt did.
+	// Likely SIOCGIFMEDIA-equivalent (physical link state) - bytes 16-31 are the actual status fields,
+	// struct layout still unconfirmed - guessing BSD ifmediareq-style [current, mask, status, active].
+	// EXPERIMENT #2: keep the name intact, only fill the trailing status words with a plausible "active" pattern.
+	if (arg3 && io_out && io_group == 'i' && (io_num == 17 || io_num == 140) && io_size == 32)
+	{
+		sys_net.todo("sys_net_bnet_ioctl(): faking active link state for cmd=%d, size=%d", io_num, io_size);
+
+		const auto words = vm::_ptr<u32>(arg3 + 16);
+
+		words[0] = 0x00000010; // ifm_current (guess: nonzero media type)
+		words[1] = 0x00000000; // ifm_mask
+		words[2] = 0x00000003; // ifm_status  (guess: IFM_AVALID | IFM_ACTIVE)
+		words[3] = 0x00000010; // ifm_active  (mirrors current)
+	}
+
 	return CELL_OK;
 }
 

@@ -1132,7 +1132,8 @@ lv2_file::open_raw_result_t lv2_file::open_raw(const std::string& local_path, s3
 				return {CELL_ENOTDIR};
 			}
 
-			fmt::throw_exception("unknown error %s (local=%s)", error, local_path);
+			sys_fs.error("lv2_file::open_raw(): unexpected host fs error %s (local=%s)", error, local_path);
+			return {CELL_EIO};
 		}
 		}
 	}
@@ -1703,7 +1704,8 @@ error_code sys_fs_opendir(ppu_thread& ppu, vm::cptr<char> path, vm::ptr<u32> fd)
 				return { CELL_ENOTDIR, path };
 			}
 
-			fmt::throw_exception("unknown error %s", error);
+			sys_fs.error("unexpected host fs error %s", error);
+			return { CELL_ENOTDIR, path };
 		}
 		}
 	}
@@ -1976,7 +1978,8 @@ error_code sys_fs_stat(ppu_thread& ppu, vm::cptr<char> path, vm::ptr<CellFsStat>
 				return { CELL_ENOTDIR, path };
 			}
 
-			fmt::throw_exception("unknown error %s (local=%s)", error, local_path);
+			sys_fs.error("unexpected host fs error %s (local=%s)", error, local_path);
+			return { CELL_ENOTDIR, path };
 		}
 		}
 	}
@@ -2140,7 +2143,8 @@ error_code sys_fs_mkdir(ppu_thread& ppu, vm::cptr<char> path, s32 mode)
 				return { CELL_ENOTDIR, path };
 			}
 
-			fmt::throw_exception("unknown error %s", error);
+			sys_fs.error("unexpected host fs error %s", error);
+			return { CELL_ENOTDIR, path };
 		}
 		}
 	}
@@ -2212,7 +2216,8 @@ error_code sys_fs_rename(ppu_thread& ppu, vm::cptr<char> from, vm::cptr<char> to
 				return {CELL_ENOTDIR, from};
 			}
 
-			fmt::throw_exception("unknown error %s", error);
+			sys_fs.error("unexpected host fs error %s", error);
+			return {CELL_ENOTDIR, from};
 		}
 		}
 	}
@@ -2274,7 +2279,8 @@ error_code sys_fs_rmdir(ppu_thread& ppu, vm::cptr<char> path)
 				return { CELL_ENOTDIR, vpath };
 			}
 
-			fmt::throw_exception("unknown error %s", error);
+			sys_fs.error("unexpected host fs error %s", error);
+			return { CELL_ENOTDIR, vpath };
 		}
 		}
 	}
@@ -2342,7 +2348,11 @@ error_code sys_fs_unlink(ppu_thread& ppu, vm::cptr<char> path)
 				return { CELL_ENOTDIR, path };
 			}
 
-			fmt::throw_exception("unknown error %s", error);
+			// Was a hard crash (fmt::throw_exception) for any host fs::error this switch didn't
+			// explicitly handle. On Windows, deleting a file RPCS3 (or something else) still has
+			// open elsewhere fails with a sharing violation rather than a POSIX-style error this
+			// switch anticipates - fail the syscall gracefully instead of crashing the emulator.
+			return {sys_fs.error, CELL_EIO, path};
 		}
 		}
 	}
@@ -2366,6 +2376,22 @@ error_code sys_fs_fcntl(ppu_thread& ppu, u32 fd, u32 op, vm::ptr<void> _arg, u32
 
 	switch (op)
 	{
+	case 0x3: // Unknown - queried on /dev_hdd0 directory fd right before "sys_init: fsck
+	          // returned invalid value" prints, size=0x10. Left untouched before, so VSH read
+	          // uninitialized memory as the filesystem status and always saw it as corrupted.
+	          // Zero-filling is a guess at "clean" semantics, matching how op 0x80000004 (below)
+	          // already treats an all-zero output as the safe/default answer.
+	case 0x4: // Unknown - same call site, size=0x38, likely the actual "fs is dirty" verdict.
+	{
+		sys_fs.error("DIAGNOSTIC MARKER: sys_fs_fcntl op 3/4 handler reached (op=0x%x, fd=%d, size=0x%x)", op, fd, _size);
+
+		if (_arg)
+		{
+			std::memset(_arg.get_ptr(), 0, _size);
+		}
+		break;
+	}
+
 	case 0x80000004: // Unknown
 	{
 		if (_size > 4)
@@ -3067,7 +3093,7 @@ error_code sys_fs_lseek(ppu_thread& ppu, u32 fd, s64 offset, s32 whence, vm::ptr
 		switch (auto error = fs::g_tls_error)
 		{
 		case fs::error::inval: return {CELL_EINVAL, "fd=%u, offset=0x%x, whence=%d", fd, offset, whence};
-		default: fmt::throw_exception("unknown error %s", error);
+		default: sys_fs.error("unexpected host fs error %s", error); return {CELL_EIO, "fd=%u, offset=0x%x, whence=%d", fd, offset, whence};
 		}
 	}
 
@@ -3191,7 +3217,8 @@ error_code sys_fs_get_block_size(ppu_thread& ppu, vm::cptr<char> path, vm::ptr<u
 				return { CELL_ENOTDIR, path };
 			}
 
-			fmt::throw_exception("unknown error %s", error);
+			sys_fs.error("unexpected host fs error %s", error);
+			return { CELL_ENOTDIR, path };
 		}
 		}
 	}
@@ -3259,7 +3286,8 @@ error_code sys_fs_truncate(ppu_thread& ppu, vm::cptr<char> path, u64 size)
 				return { CELL_ENOTDIR, path };
 			}
 
-			fmt::throw_exception("unknown error %s", error);
+			sys_fs.error("unexpected host fs error %s", error);
+			return { CELL_ENOTDIR, path };
 		}
 		}
 	}
@@ -3309,7 +3337,8 @@ error_code sys_fs_ftruncate(ppu_thread& ppu, u32 fd, u64 size)
 		case fs::error::ok:
 		default:
 		{
-			fmt::throw_exception("unknown error %s", error);
+			sys_fs.error("unexpected host fs error %s", error);
+			return CELL_EIO;
 		}
 		}
 	}
@@ -3379,7 +3408,8 @@ error_code sys_fs_chmod(ppu_thread&, vm::cptr<char> path, s32 mode)
 				return { CELL_ENOTDIR, path };
 			}
 
-			fmt::throw_exception("unknown error %s", error);
+			sys_fs.error("unexpected host fs error %s", error);
+			return { CELL_ENOTDIR, path };
 		}
 		}
 	}
@@ -3526,7 +3556,8 @@ error_code sys_fs_utime(ppu_thread& ppu, vm::cptr<char> path, vm::cptr<CellFsUti
 				return { CELL_ENOTDIR, path };
 			}
 
-			fmt::throw_exception("unknown error %s", error);
+			sys_fs.error("unexpected host fs error %s", error);
+			return { CELL_ENOTDIR, path };
 		}
 		}
 	}

@@ -103,6 +103,10 @@ struct cfg_root : cfg::node
 		cfg::_bool host_root{ this, "Enable /host_root/" };
 		cfg::_bool init_dirs{ this, "Initialize Directories", true };
 
+
+		cfg::_int<1, 2000> hdd0_size_gb{ this, "Virtual HDD0 Size (GB)", 298 }; //BROG
+
+
 		cfg::_bool limit_cache_size{ this, "Limit disk cache size", false };
 		cfg::_int<0, 10240> cache_max_size{ this, "Disk cache maximum size (MB)", 5120 };
 		cfg::_bool empty_hdd0_tmp{ this, "Empty /dev_hdd0/tmp/", true };

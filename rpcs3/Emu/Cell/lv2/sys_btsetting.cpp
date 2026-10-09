@@ -11,3 +11,9 @@ error_code sys_btsetting_if(u64 cmd, vm::ptr<void> msg)
 
 	return CELL_OK;
 }
+
+error_code sys_bluetooth_aud_serial()
+{
+	// Polled continuously by VSH while idle - not logged, it's just noise.
+	return CELL_ENODEV;
+}

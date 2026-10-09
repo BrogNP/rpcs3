@@ -991,6 +991,8 @@ error_code sys_process_detach_child(ppu_thread& ppu, u32 pid)
 
 extern void signal_system_cache_can_stay();
 
+
+
 void _sys_process_exit(ppu_thread& ppu, s32 status, u32 arg2, u32 arg3)
 {
 	ppu.state += cpu_flag::wait;

@@ -40,7 +40,7 @@ error_code sys_sm_get_ext_event2(vm::ptr<u64> a1, vm::ptr<u64> a2, vm::ptr<u64> 
 	if (a3) *a3 = 0; else return CELL_EFAULT;
 
 	// eagain for no event
-	return not_an_error(CELL_EAGAIN);
+	return CELL_OK;
 }
 
 error_code sys_sm_shutdown(ppu_thread& ppu, u16 op, vm::ptr<void> param, u64 size)
