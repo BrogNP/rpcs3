@@ -1336,7 +1336,7 @@ extern void ppu_execute_syscall(ppu_thread& ppu, u64 code)
 				const std::string thread_name = ppu.get_name();
 
 				// Only the threads that take part in the sysutil handshake (synchronization primitives included, that is how it is done)
-				const bool important_thread = thread_name.find("main_thread") != umax || thread_name.find("SceVshSysutil") != umax;
+				const bool important_thread = thread_name.find("main_thread") != umax || thread_name.find("SceVshSysutil") != umax || thread_name.find("ScePafJob") != umax;
 
 				if (name != "sys_timer_usleep" && name != "sys_ppu_thread_yield" && name != "sys_memory_get_page_attribute" &&
 					name != "sys_hid_manager_read" && name != "sys_hid_manager_ioctl" && name != "sys_time_get_system_time" && name != "sys_time_get_current_time" &&
