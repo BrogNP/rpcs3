@@ -1084,6 +1084,8 @@ namespace rsx
 
 				const auto process = ensure(idm::get_unlocked<lv2_obj, lv2_process>(proc));
 
+				rsx_log.success("RSX context switch: process 0x%x (context 0x%x) takes the screen (foreground process: 0x%x)", proc, id, foreground);
+
 				lv2_context = &context;
 				lv2_context_id = id;
 				lv2_rsx_process = process->rsx_info.get();
