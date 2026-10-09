@@ -205,6 +205,8 @@ error_code sys_hid_manager_514(ppu_thread& ppu, u32 pkg_id, vm::ptr<void> buf, u
 		// spammy sys_hid.todo("device_type: 0x%x", device_type[0]);
 
 		// return 1 or 0? look like almost like another check_focus type check, returning 0 looks to keep system focus
+		// 1 for a process that does not own the pad focus (ie. VSH while a game is in front)
+		return not_an_error(vsh_focus::foreground_process() == id_manager::g_process ? 0 : 1);
 	}
 	else if (pkg_id == 0xD)
 	{
