@@ -1360,6 +1360,26 @@ extern void ppu_execute_syscall(ppu_thread& ppu, u64 code)
 						{
 							ppu_log.success("VSH ScePafJob thread 0x%x call stack:\n%s", ppu.id, ppu.dump_callstack());
 
+							// RSX contexts: what gates vblank/user-command delivery to them (only readable for the context of the current process)
+							idm::select<lv2_rsx_context>([&](u32 ctx_id, u32 ctx_proc, lv2_rsx_context& ctx)
+							{
+								std::string info = fmt::format("context 0x%x process 0x%x inited=%d", ctx_id, ctx_proc, +ctx.inited);
+
+								if (ctx_proc == id_manager::g_process && ctx.driver_info)
+								{
+									const auto& di = vm::_ref<RsxDriverInfo>(ctx.driver_info);
+									fmt::append(info, " handlers=0x%x vblank_count=%u handler_queue=0x%x user_cmd_param=0x%x", +di.handlers, +di.head[0].vBlankCount, +di.handler_queue, +di.userCmdParam);
+
+									if (const auto q = idm::get_unlocked<lv2_obj, lv2_event_queue>(+di.handler_queue))
+									{
+										std::lock_guard lock(q->mutex);
+										fmt::append(info, " queue_pending_events=%u queue_has_waiter=%d", ::size32(q->events), q->pq != nullptr);
+									}
+								}
+
+								ppu_log.success("VSH RSX %s", info);
+							});
+
 							// The in-game menu job polls these VSH globals (addresses from vsh.elf of this firmware, diagnostic only)
 							ppu_log.success("VSH globals: [0x7366c4]=0x%x [0x7366c8]=0x%x [0x7366cc]=0x%x [0x711110]=0x%x [0x736790]=0x%x", +vm::read32(0x7366c4), +vm::read32(0x7366c8), +vm::read32(0x7366cc), +vm::read32(0x711110), +vm::read32(0x736790));
 						}
