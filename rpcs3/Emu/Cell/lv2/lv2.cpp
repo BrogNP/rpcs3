@@ -1353,6 +1353,9 @@ extern void ppu_execute_syscall(ppu_thread& ppu, u64 code)
 						if (s_last_dumped.exchange(ppu.id) != ppu.id && s_dump_count++ < 6)
 						{
 							ppu_log.success("VSH ScePafJob thread 0x%x call stack:\n%s", ppu.id, ppu.dump_callstack());
+
+							// The in-game menu job polls these VSH globals (addresses from vsh.elf of this firmware, diagnostic only)
+							ppu_log.success("VSH globals: [0x7366c4]=0x%x [0x7366c8]=0x%x [0x7366cc]=0x%x [0x711110]=0x%x [0x736790]=0x%x", +vm::read32(0x7366c4), +vm::read32(0x7366c8), +vm::read32(0x7366cc), +vm::read32(0x711110), +vm::read32(0x736790));
 						}
 					}
 				}
