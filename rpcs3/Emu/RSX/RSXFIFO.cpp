@@ -1,4 +1,6 @@
 #include "stdafx.h"
+#include "Emu/Cell/lv2/sys_process.h"
+#include "Emu/IdManager.h"
 
 #include "Emu/System.h"
 #include "RSXFIFO.h"
@@ -17,6 +19,8 @@ using spu_rdata_t = std::byte[128];
 
 extern void mov_rdata(spu_rdata_t& _dst, const spu_rdata_t& _src);
 extern bool cmp_rdata(const spu_rdata_t& _lhs, const spu_rdata_t& _rhs);
+
+u32 g_diag_method_hist[0x4000]{}; // diagnostic
 
 namespace rsx
 {
@@ -883,6 +887,8 @@ namespace rsx
 
 			const u32 reg = (command.reg & 0xffff) >> 2;
 			const u32 value = command.value;
+
+			if (vsh_focus::g_vsh_in_front && +id_manager::g_process == 0x1000000) g_diag_method_hist[reg & 0x3fff]++; // diagnostic
 
 			m_ctx->register_state->decode(reg, value);
 

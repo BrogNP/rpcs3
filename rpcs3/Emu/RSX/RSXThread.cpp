@@ -23,6 +23,7 @@
 #include "Emu/Cell/lv2/sys_process.h"
 
 static atomic_t<u64> g_diag_rsx_loop_time = 0; // diagnostic
+extern u32 g_diag_method_hist[0x4000];
 #include "Emu/Cell/lv2/sys_time.h"
 #include "Emu/Cell/Modules/cellGcmSys.h"
 #include "util/serialization_ext.hpp"
@@ -1174,6 +1175,18 @@ namespace rsx
 			const u64 age_ms = (get_system_time() - g_diag_rsx_loop_time) / 1000;
 			const auto c = lv2_context;
 			rsx_log.warning("DIAG heartbeat: rsx loop last ran %llums ago, context=0x%x get=0x%x put=0x%x state=0x%x irq_mask=0x%x", age_ms, lv2_context_id, c && ctrl ? +ctrl->get : 0u, c && ctrl ? +ctrl->put : 0u, +state.load(), +m_eng_interrupt_mask.load());
+
+			std::string hist;
+			for (int n = 0; n < 12; n++)
+			{
+				u32 best = 0;
+				for (u32 r = 1; r < 0x4000; r++) if (g_diag_method_hist[r] > g_diag_method_hist[best]) best = r;
+				if (!g_diag_method_hist[best]) break;
+				fmt::append(hist, " [0x%x]=%u", best << 2, g_diag_method_hist[best]);
+				g_diag_method_hist[best] = 0;
+			}
+			std::memset(g_diag_method_hist, 0, sizeof(g_diag_method_hist));
+			rsx_log.warning("DIAG VSH methods in last second:%s", hist);
 		}
 
 		if (isHLE)
