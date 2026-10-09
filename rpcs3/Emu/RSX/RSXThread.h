@@ -123,6 +123,18 @@ namespace rsx
 		// FIFO
 	public:
 		std::unique_ptr<FIFO::FIFO_control> fifo_ctrl;
+
+		// FIFO execution state of RSX contexts that are switched out (keyed by context id).
+		// A context must resume mid-method exactly where it stopped, so its FIFO_control (method state, cache) is kept alive.
+		struct saved_fifo_state
+		{
+			const void* context = nullptr;
+			u32 dma_address = 0;
+			std::unique_ptr<FIFO::FIFO_control> fifo;
+			u32 ret_addr = RSX_CALL_STACK_EMPTY;
+			u32 code_start = 0;
+		};
+		std::unordered_map<u32, saved_fifo_state> m_saved_fifo;
 		std::vector<std::pair<u32, u32>> dump_callstack_list() const override;
 		void dump_misc(std::string& ret, std::any& custom_data) const override;
 		struct ::lv2_rsx_context* lv2_context = nullptr;

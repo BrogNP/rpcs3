@@ -1097,6 +1097,17 @@ namespace rsx
 			{
 				changed = true;
 
+				if (fifo_ctrl && lv2_context)
+				{
+					// Keep the outgoing context's FIFO state so it resumes exactly where it stopped
+					auto& saved = m_saved_fifo[lv2_context_id];
+					saved.context = lv2_context;
+					saved.dma_address = lv2_context->dma_address;
+					saved.fifo = std::move(fifo_ctrl);
+					saved.ret_addr = fifo_ret_addr;
+					saved.code_start = last_known_code_start;
+				}
+
 				const auto process = ensure(idm::get_unlocked<lv2_obj, lv2_process>(proc));
 
 				rsx_log.success("RSX context switch: process 0x%x (context 0x%x) takes the screen (foreground process: 0x%x)", proc, id, foreground);
@@ -1116,8 +1127,32 @@ namespace rsx
 
 		if (changed && lv2_context)
 		{
-			fifo_ctrl = std::make_unique<::rsx::FIFO::FIFO_control>(this);
-			fifo_ctrl->set_get(ctrl->get);
+			bool resumed = false;
+
+			if (auto found = m_saved_fifo.find(lv2_context_id); found != m_saved_fifo.end())
+			{
+				auto& saved = found->second;
+
+				if (saved.fifo && saved.context == lv2_context && saved.dma_address == lv2_context->dma_address)
+				{
+					fifo_ctrl = std::move(saved.fifo);
+					fifo_ret_addr = saved.ret_addr;
+					last_known_code_start = saved.code_start;
+
+					// Guest memory was modified while this context was switched out
+					fifo_ctrl->invalidate_cache();
+					resumed = true;
+				}
+
+				m_saved_fifo.erase(found);
+			}
+
+			if (!resumed)
+			{
+				fifo_ctrl = std::make_unique<::rsx::FIFO::FIFO_control>(this);
+				fifo_ctrl->set_get(ctrl->get);
+				fifo_ret_addr = RSX_CALL_STACK_EMPTY;
+			}
 		}
 
 		if (!lv2_context)
