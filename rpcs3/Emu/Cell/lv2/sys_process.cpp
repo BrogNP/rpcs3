@@ -2,6 +2,7 @@
 #include "sys_process.h"
 #include "Emu/Memory/vm_ptr.h"
 #include "Emu/System.h"
+#include "Emu/RSX/RSXThread.h"
 #include "Emu/VFS.h"
 #include "Loader/PSF.h"
 #include "Emu/IdManager.h"
@@ -1012,6 +1013,13 @@ namespace vsh_focus
 		const bool vsh_in_front = !g_vsh_in_front.load();
 		g_vsh_in_front = vsh_in_front;
 		sys_process.success("Foreground process: %s", vsh_in_front ? "VSH" : "game");
+
+		// Make the RSX thread pick the context of the new foreground process (decide_rsx_context_queue only runs on this interrupt)
+		if (auto render = rsx::get_current_renderer())
+		{
+			render->m_eng_interrupt_mask |= rsx::dma_control_interrupt;
+		}
+
 		return true;
 	}
 }
