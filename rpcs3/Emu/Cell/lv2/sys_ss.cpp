@@ -7,6 +7,8 @@
 #include "Emu/Cell/PPUThread.h"
 #include "Emu/system_config.h"
 #include "util/sysinfo.hpp"
+#include "Crypto/aes.h"
+#include "Crypto/key_vault.h"
 
 #include <charconv>
 #include <shared_mutex>
@@ -577,6 +579,29 @@ error_code sys_ss_sec_hw_framework(ppu_thread& ppu, u64 pkg_id, u64 a1)
 		sys_ss.todo("sys_ss_sec_hw_framework(0x5007): input: %s", std::span<u8>(ppu._sudo<u8>(a1), 0x18));
 		return CELL_OK;
 	}
+	case 0x5012:
+	{
+		// Used by the NP auth code (FUN_005fd714 in vsh.elf) to build the "X-I-5-Passphrase" request header:
+		// a1 -> { u64 size (0x44); be32 input; be32 output }, input = { be32 0; be32 0x18; u8 id[16] }, output = 0x200 bytes
+		// that the caller base64-encodes. On hardware the blob is sealed with console-unique secrets that only Sony's servers can
+		// open, so it cannot be reproduced. A private server gets the request structure followed by the console ID instead.
+		const u32 in_addr = vm::read32(static_cast<u32>(a1) + 8);
+		const u32 out_addr = vm::read32(static_cast<u32>(a1) + 12);
+
+		if (!in_addr || !out_addr)
+		{
+			return CELL_EFAULT;
+		}
+
+		std::array<u8, 0x200> out{};
+		std::memcpy(out.data(), vm::base(in_addr), 0x18);
+		const be_t<u128> idps = g_cfg.sys.console_idps.get();
+		std::memcpy(out.data() + 0x18, &idps, 16);
+		std::memcpy(vm::base(out_addr), out.data(), out.size());
+
+		sys_ss.notice("sys_ss_sec_hw_framework(0x5012): wrote unsealed NP passphrase blob (console ID appended, not signed)");
+		return CELL_OK;
+	}
 	default: break;
 	}
 
@@ -585,6 +610,46 @@ error_code sys_ss_sec_hw_framework(ppu_thread& ppu, u64 pkg_id, u64 a1)
 
 error_code sys_ss_virtual_trm_manager(u64 pkg_id, u64 a1, u64 a2, u64 a3, u64 a4)
 {
+	if (pkg_id == 0x200e)
+	{
+		// cellSsVtrmDecryptMaster(iv, data): AES-128-CBC decryption of 0x40 bytes in place with a "master" key
+		// (key = SC master key XOR LAID||PAID of the caller). The VSH uses it to unwrap the NP platform passphrase and checks
+		// the first 8 bytes of the result; it tries a second (retail) wrapped copy when the first one does not verify.
+		// An internal/debug unit uses SC_ISO_SERIES_INTERNAL_KEY_3, a retail unit SC_KEY_FOR_MASTER_2.
+		sys_ss.notice("sys_ss_virtual_trm_manager(pkg=0x200e, iv=0x%llx, data=0x%llx): decrypt master", a1, a2);
+
+		if (!a1 || !a2)
+		{
+			return CELL_EFAULT;
+		}
+
+		const auto process = idm::get_unlocked<lv2_obj, lv2_process>(id_manager::g_process);
+
+		const u64 laid = static_cast<u64>(LAID_2);
+		const u64 paid = process && process->self_info.valid ? process->self_info.prog_id_hdr.program_authority_id : static_cast<u64>(PAID_81);
+
+		u8 key[PASSPHRASE_KEY_LEN];
+		const u8* sc_key = g_cfg.core.debug_console_mode ? SC_ISO_SERIES_INTERNAL_KEY_3 : SC_KEY_FOR_MASTER_2;
+
+		for (u32 i = 0; i < PASSPHRASE_KEY_LEN; i++)
+		{
+			const u64 half = i < 8 ? laid : paid;
+			key[i] = sc_key[i] ^ static_cast<u8>(half >> (8 * (7 - (i & 7))));
+		}
+
+		u8 iv[16];
+		u8 buf[0x40];
+		std::memcpy(iv, vm::base(static_cast<u32>(a1)), sizeof(iv));
+		std::memcpy(buf, vm::base(static_cast<u32>(a2)), sizeof(buf));
+
+		aes_context ctx;
+		aes_setkey_dec(&ctx, key, 128);
+		aes_crypt_cbc(&ctx, AES_DECRYPT, sizeof(buf), iv, buf, buf);
+
+		std::memcpy(vm::base(static_cast<u32>(a2)), buf, sizeof(buf));
+		return CELL_OK;
+	}
+
 	sys_ss.todo("sys_ss_virtual_trm_manager(pkg=0x%llx, a1=0x%llx, a2=0x%llx, a3=0x%llx, a4=0x%llx)", pkg_id, a1, a2, a3, a4);
 
 	return CELL_OK;

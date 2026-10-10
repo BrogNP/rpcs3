@@ -3654,11 +3654,13 @@ error_code sys_fs_mapped_free(ppu_thread&, u32 fd, vm::ptr<void> ptr)
 	return CELL_OK;
 }
 
-error_code sys_fs_truncate2(ppu_thread&, u32 fd, u64 size)
+error_code sys_fs_truncate2(ppu_thread& ppu, vm::cptr<char> path, u64 size)
 {
-	sys_fs.todo("sys_fs_truncate2(fd=%d, size=0x%x)", fd, size);
+	// The firmware wrapper (cellFsTruncate2) forwards its first argument unchanged and rejects NULL,
+	// and callers (mms database journal preallocation) pass a path pointer, not a descriptor.
+	sys_fs.warning("sys_fs_truncate2(path=%s, size=0x%llx)", path, size);
 
-	return CELL_OK;
+	return sys_fs_truncate(ppu, path, size);
 }
 
 error_code sys_fs_get_mount_info_size(ppu_thread&, vm::ptr<u64> len)
