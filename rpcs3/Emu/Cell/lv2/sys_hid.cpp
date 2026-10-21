@@ -66,6 +66,7 @@ error_code sys_hid_manager_open(ppu_thread& ppu, u8 device_type, u8 port_no, vm:
 	}
 
 	*handle = obj->real_id;
+
 	return CELL_OK;
 }
 
@@ -240,7 +241,7 @@ extern void pad_get_data(u32 port_no, CellPadData* data, bool get_periph_data);
 
 error_code sys_hid_manager_read(u32 handle, u32 pkg_id, vm::ptr<void> buf, u64 buf_size)
 {
-	(pkg_id == 2 || pkg_id == 0x81 ? sys_hid.trace : sys_hid.todo)
+	(pkg_id == 2 || pkg_id == 0x81 || pkg_id == 0xff ? sys_hid.trace : sys_hid.todo)
 		("sys_hid_manager_read(handle=0x%x, pkg_id=0x%x, buf=*0x%x, buf_size=0x%llx)", handle, pkg_id, buf, buf_size);
 
 	const auto handle_ptr = idm::get_unlocked<lv2_hidio_handle>(handle % 256);
@@ -284,7 +285,17 @@ error_code sys_hid_manager_read(u32 handle, u32 pkg_id, vm::ptr<void> buf, u64 b
 	alignas(128) CellPadData tmpData{};
 	std::memset(&tmpData, 0, sizeof(tmpData));
 
-	if (pkg_id == 2)
+	if (pkg_id == 0xff)
+	{
+		// 0.95 VSH (2.70 uses pkg 2): same button array, buf_size is in bytes (0x80 = 64 codes)
+		if ((pad_get_data(port_no, &tmpData, false), true) && tmpData.len > 0)
+		{
+			u64 cpySize = std::min(static_cast<u64>(tmpData.len) * sizeof(u16), buf_size);
+			memcpy(buf.get_ptr(), &tmpData.button, cpySize);
+			return not_an_error(cpySize);
+		}
+	}
+	else if (pkg_id == 2)
 	{
 		// cellPadGetData
 		// it returns just button array from 'CellPadData'
