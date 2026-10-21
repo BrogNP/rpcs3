@@ -13,6 +13,7 @@
 #include "Emu/system_utils.hpp"
 #include "Emu/System.h"
 #include "Emu/Cell/lv2/sys_process.h"
+#include "Emu/Cell/timers.hpp"
 
 #include <span>
 #include <shared_mutex>
@@ -3473,7 +3474,35 @@ error_code sys_fs_disk_free(ppu_thread& ppu, vm::cptr<char> path, vm::ptr<u64> t
 
 	// HACK: Hopefully nothing uses this value or once at max because its hacked here:
 	// The total size can change based on the size of the directory
-	const u64 total = available + fs::get_dir_size(local_path, mp->sector_size);
+	u64 total = available + fs::get_dir_size(local_path, mp->sector_size);
+
+	// Virtual disk with a size limit: the HDD partitions share it
+	if (const u64 limit = g_cfg_vfs.get_disk_limit(); limit && (mp == &g_mp_sys_dev_hdd0 || mp == &g_mp_sys_dev_hdd1))
+	{
+		static atomic_t<u64> s_used_cache = 0;
+		static atomic_t<u64> s_used_time = 0;
+
+		u64 used = s_used_cache;
+
+		if (const u64 now = get_system_time(); now - s_used_time > 5'000'000)
+		{
+			used = 0;
+
+			for (const std::string& dir : {rpcs3::utils::get_hdd0_dir(), rpcs3::utils::get_hdd1_dir()})
+			{
+				if (const u64 size = fs::get_dir_size(dir, mp->sector_size); size != umax)
+				{
+					used += size;
+				}
+			}
+
+			s_used_cache = used;
+			s_used_time = now;
+		}
+
+		total = limit;
+		available = used >= limit ? 0 : limit - used;
+	}
 
 	ppu.check_state();
 	*total_free = total;
