@@ -753,6 +753,22 @@ error_code sys_event_port_connect_ipc(ppu_thread& ppu, u32 eport_id, u64 ipc_key
 	// gets created and VSH spins on "waiting for audio server process ready" forever - fake it here.
 	if (!queue && ipc_key == 0x8000cafe0246fab4ull)
 	{
+		// sys_audio.self is a separate process (started by VSH with _sys_process_spawn): give it time to create the queue
+		for (u32 i = 0; i < 400 && !queue; i++)
+		{
+			if (ppu.check_state())
+			{
+				return {};
+			}
+
+			thread_ctrl::wait_for(25'000);
+			queue = lv2_event_queue::find(ipc_key);
+		}
+	}
+
+	// Fallback if the audio server never came up
+	if (!queue && ipc_key == 0x8000cafe0246fab4ull)
+	{
 		sys_event.warning("sys_event_port_connect_ipc(): faking missing audio-server-ready queue for ipc_key=0x%x", ipc_key);
 
 		lv2_obj::create<lv2_event_queue>(SYS_SYNC_PROCESS_SHARED, ipc_key, SYS_SYNC_NEWLY_CREATED, [&]()

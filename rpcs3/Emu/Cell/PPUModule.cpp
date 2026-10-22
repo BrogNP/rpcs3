@@ -2434,7 +2434,7 @@ shared_ptr<lv2_process> ppu_load_self(const ppu_exec_object& elf, shared_ptr<lv2
 	const std::string elf_path = argv0[0];
 	process_ptr->ELF_file_path = elf_path;
 
-	if (!ar && id_manager::g_process != lv2_process::id_base && !elf_path.starts_with("/dev_flash/"))
+	if (!ar && id_manager::g_process != lv2_process::id_base && !elf_path.starts_with("/dev_flash/") && !std::string_view(elf_path).substr(elf_path.rfind('/') + 1).starts_with("sys_"))
 	{
 		// A game started by VSH takes the screen and the pad
 		vsh_focus::g_game_process = id_manager::g_process;
@@ -2873,7 +2873,8 @@ shared_ptr<lv2_process> ppu_load_self(const ppu_exec_object& elf, shared_ptr<lv2
 		load_libs.emplace("libsysmodule.sprx");
 	}
 
-	if (ar || Emu.IsVsh() || virtual_load)
+	// System helper processes spawned by VSH without a PARAM.SFO (sys_audio.self) carry their own runtime like vsh.self
+	if (ar || Emu.IsVsh() || virtual_load || (parent_process != umax && lv2_paramsfo.empty()))
 	{
 		// Cannot be used with vsh.self or savestates (they self-manage itself)
 		load_libs.clear();

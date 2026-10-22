@@ -1,6 +1,7 @@
 #pragma once
 
 #include "util/atomic.hpp"
+#include <set>
 #include "util/shared_ptr.hpp"
 #include "Emu/Cell/timers.hpp"
 
@@ -127,7 +128,9 @@ static_assert(sizeof(sys_config_padmanager_data_t) == 26);
 
 class lv2_config
 {
-	atomic_t<u32> m_state = 0;
+	// Processes that already got the kernel registered services (the services live in the idm of each process)
+	std::set<u32> m_initialized_processes;
+	shared_mutex m_init_mutex;
 
 	// LV2 Config mutex
 	shared_mutex m_mutex;

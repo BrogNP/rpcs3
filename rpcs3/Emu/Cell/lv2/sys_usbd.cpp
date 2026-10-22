@@ -1178,8 +1178,11 @@ error_code sys_usbd_initialize(ppu_thread& ppu, vm::ptr<u32> handle)
 	{
 		std::lock_guard lock(usbh.mutex);
 
-		// Must not occur (lv2 allows multiple handles, cellUsbd does not)
-		ensure(!usbh.is_init.exchange(true));
+		// lv2 allows multiple handles (cellUsbd does not): with VSH, sys_audio.self and VSH both open one
+		if (usbh.is_init.exchange(true))
+		{
+			sys_usbd.notice("sys_usbd_initialize(): already initialized by another process");
+		}
 	}
 
 	ppu.check_state();

@@ -72,9 +72,13 @@ void dump_buffer(std::string& out, const std::vector<u8>& buffer)
 // LV2 Config
 void lv2_config::initialize()
 {
-	if (m_state || !m_state.compare_and_swap_test(0, 1))
 	{
-		return;
+		std::lock_guard lock(m_init_mutex);
+
+		if (!m_initialized_processes.insert(id_manager::g_process).second)
+		{
+			return;
+		}
 	}
 
 	// Register padmanager service, notifying vsh that a controller is connected

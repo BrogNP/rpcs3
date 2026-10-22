@@ -1336,25 +1336,9 @@ void sys_process_exit3(ppu_thread& ppu, s32 status)
 }
 
 #pragma optimize("", off)
-error_code sys_process_spawns_a_self2(ppu_thread& ppu, vm::ptr<u32> pid, u32 primary_prio, u64 flags, vm::ptr<void> stack, u32 stack_size, u32 mem_id, vm::ptr<void> param_sfo, vm::ptr<void> dbg_data)
+// Spawns a process from a single argument buffer: argv and envp pointers must reside within [stack, stack + stack_size]
+static error_code lv2_spawn_from_stack(ppu_thread& ppu, vm::ptr<u32> pid, vm::ptr<void> stack, u32 stack_size, u32 mem_id, std::vector<u8> paramsfo)
 {
-	sys_process.todo("sys_process_spawns_a_self2(pid=*0x%x, primary_prio=0x%x, flags=0x%llx, stack=*0x%x, stack_size=0x%x, mem_id=0x%x, param_sfo=*0x%x, dbg_data=*0x%x"
-		, pid, primary_prio, flags, stack, stack_size, mem_id, param_sfo, dbg_data);
-
-	if (!vm::check_addr(ppu.vm_owner.get(), stack.addr(), 0, stack_size))
-	{
-		return { CELL_EFAULT, stack };
-	}
-
-	std::vector<u8> paramsfo(0x40);
-
-	if (!vm::check_addr(ppu.vm_owner.get(), param_sfo.addr(), 0, 0x40))
-	{
-		return {CELL_EFAULT, param_sfo.addr()};
-	}
-
-	std::memcpy(paramsfo.data(), vm::base(param_sfo.addr()), 0x40);
-
 	// This syscall does something special: it provides a single buffer for all arguments
 	// All arguments must be contained within [stack, stack + stack_size]
 	// And instead of using offsets within the buffer, it provides direct addresses that must reisde in [stack, stack + stack_size] range
@@ -1420,11 +1404,29 @@ error_code sys_process_spawns_a_self2(ppu_thread& ppu, vm::ptr<u32> pid, u32 pri
 	const u32 old_proc = id_manager::g_process;
 	const auto saved = std::make_tuple(vm::g_base_addr, vm::g_sudo_addr, vm::g_exec_addr, vm::g_stat_addr, vm::g_vm_image);
 
-	const auto mem_ct = idm::get_unlocked<lv2_memory_container>(mem_id);
+	shared_ptr<lv2_memory_container> mem_ct;
 
-	if (!mem_ct)
+	if (mem_id == umax)
 	{
-		return CELL_ESRCH;
+		// No explicit container: the child draws from the default container of its parent (like a normal LV2 process would)
+		if (const auto parent = idm::get_unlocked<lv2_obj, lv2_process>(ppu.proc_id))
+		{
+			mem_ct = parent->parent_memory_container;
+		}
+
+		if (!mem_ct)
+		{
+			return CELL_ESRCH;
+		}
+	}
+	else
+	{
+		mem_ct = idm::get_unlocked<lv2_memory_container>(mem_id);
+
+		if (!mem_ct)
+		{
+			return CELL_ESRCH;
+		}
 	}
 
 	lv2_exitspawn(ppu, false, mem_ct, argv, envp, data, paramsfo);
@@ -1442,4 +1444,40 @@ error_code sys_process_spawns_a_self2(ppu_thread& ppu, vm::ptr<u32> pid, u32 pri
 	*pid = new_proc;
 
 	return CELL_OK;
+}
+
+error_code sys_process_spawns_a_self2(ppu_thread& ppu, vm::ptr<u32> pid, u32 primary_prio, u64 flags, vm::ptr<void> stack, u32 stack_size, u32 mem_id, vm::ptr<void> param_sfo, vm::ptr<void> dbg_data)
+{
+	sys_process.todo("sys_process_spawns_a_self2(pid=*0x%x, primary_prio=0x%x, flags=0x%llx, stack=*0x%x, stack_size=0x%x, mem_id=0x%x, param_sfo=*0x%x, dbg_data=*0x%x"
+		, pid, primary_prio, flags, stack, stack_size, mem_id, param_sfo, dbg_data);
+
+	if (!vm::check_addr(ppu.vm_owner.get(), stack.addr(), 0, stack_size))
+	{
+		return { CELL_EFAULT, stack };
+	}
+
+	std::vector<u8> paramsfo(0x40);
+
+	if (!vm::check_addr(ppu.vm_owner.get(), param_sfo.addr(), 0, 0x40))
+	{
+		return {CELL_EFAULT, param_sfo.addr()};
+	}
+
+	std::memcpy(paramsfo.data(), vm::base(param_sfo.addr()), 0x40);
+
+	return lv2_spawn_from_stack(ppu, pid, stack, stack_size, mem_id, std::move(paramsfo));
+}
+
+error_code _sys_process_spawn(ppu_thread& ppu, vm::ptr<u32> pid, u32 primary_prio, u64 flags, vm::ptr<void> stack, u32 stack_size, u64 unk1, u64 unk2)
+{
+	sys_process.warning("_sys_process_spawn(pid=*0x%x, primary_prio=0x%x, flags=0x%llx, stack=*0x%x, stack_size=0x%x, unk1=0x%llx, unk2=0x%llx)"
+		, pid, primary_prio, flags, stack, stack_size, unk1, unk2);
+
+	if (!vm::check_addr(ppu.vm_owner.get(), stack.addr(), 0, stack_size))
+	{
+		return { CELL_EFAULT, stack };
+	}
+
+	// Used for system helper processes (sys_audio.self): no memory container, no PARAM.SFO
+	return lv2_spawn_from_stack(ppu, pid, stack, stack_size, umax, {});
 }

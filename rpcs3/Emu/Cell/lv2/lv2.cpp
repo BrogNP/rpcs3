@@ -161,7 +161,7 @@ const std::array<std::pair<ppu_intrp_func_t, std::string_view>, 1024> g_ppu_sysc
 	BIND_SYSC(sys_process_getppid),                         //18  (0x012)
 	BIND_SYSC(sys_process_kill),                            //19  (0x013)
 	uns_func,                                               //20  (0x014)  UNS
-	NULL_FUNC(_sys_process_spawn),                          //21  (0x015)  DBG
+	BIND_SYSC(_sys_process_spawn),                            //21  (0x015)  DBG
 	BIND_SYSC(_sys_process_exit),                           //22  (0x016)
 	BIND_SYSC(sys_process_wait_for_child2),                 //23  (0x017)  DBG
 	null_func,//BIND_SYSC(),                                //24  (0x018)  DBG
