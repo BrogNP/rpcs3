@@ -372,6 +372,9 @@ struct lv2_dir final : lv2_fs_object
 	// Current reading position
 	atomic_t<u64> pos{0};
 
+	// Byte position of raw device access (fcntl 3/4, used by the firmware fsck)
+	atomic_t<u64> raw_pos{0};
+
 	lv2_dir(std::string_view filename, std::vector<fs::dir_entry>&& entries)
 		: lv2_fs_object(filename)
 		, entries(std::move(entries))

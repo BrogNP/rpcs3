@@ -2369,6 +2369,9 @@ error_code sys_fs_access(ppu_thread&, vm::cptr<char> path, s32 mode)
 	return CELL_OK;
 }
 
+extern void sys_storage_fake_hdd_read(u64 offset, u8* buf, u64 size);
+extern void sys_storage_fake_hdd_write(u64 offset, const u8* buf, u64 size);
+
 error_code sys_fs_fcntl(ppu_thread& ppu, u32 fd, u32 op, vm::ptr<void> _arg, u32 _size)
 {
 	lv2_obj::sleep(ppu);
@@ -2377,6 +2380,85 @@ error_code sys_fs_fcntl(ppu_thread& ppu, u32 fd, u32 op, vm::ptr<void> _arg, u32
 
 	switch (op)
 	{
+	case 3: // Raw device seek (0.9x firmware fsck on the mount point directory): {u64 byte offset, ...}
+	{
+		const auto dir = idm::get_unlocked<lv2_fs_object, lv2_dir>(fd);
+
+		if (!dir)
+		{
+			return CELL_EBADF;
+		}
+
+		if (!_arg || _size < 8)
+		{
+			return CELL_EINVAL;
+		}
+
+		dir->raw_pos = *vm::static_ptr_cast<be_t<u64>>(_arg);
+		return CELL_OK;
+	}
+
+	case 5: // Raw device write, same request layout as the read (0.9x firmware fsck)
+	{
+		const auto dir = idm::get_unlocked<lv2_fs_object, lv2_dir>(fd);
+
+		if (!dir)
+		{
+			return CELL_EBADF;
+		}
+
+		if (!_arg || _size < 0x38)
+		{
+			return CELL_EINVAL;
+		}
+
+		const auto arg = vm::static_ptr_cast<u8>(_arg);
+		const u32 buf_addr = *vm::ptr<be_t<u32>>::make(arg.addr() + 0x28);
+		const u32 size = *vm::ptr<be_t<u32>>::make(arg.addr() + 0x30);
+
+		if (!buf_addr || size > 0x100000)
+		{
+			return CELL_EINVAL;
+		}
+
+		const u64 pos = dir->raw_pos.fetch_add(size);
+
+		sys_storage_fake_hdd_write(pos, vm::_ptr<u8>(buf_addr), size);
+
+		*vm::ptr<be_t<u64>>::make(arg.addr() + 0x18) = size;
+		return CELL_OK;
+	}
+
+	case 4: // Raw device read (0.9x firmware fsck): request header 0x18 bytes, then +0x18 u64 result, +0x28 u32 buffer, +0x30 u32 size
+	{
+		const auto dir = idm::get_unlocked<lv2_fs_object, lv2_dir>(fd);
+
+		if (!dir)
+		{
+			return CELL_EBADF;
+		}
+
+		if (!_arg || _size < 0x38)
+		{
+			return CELL_EINVAL;
+		}
+
+		const auto arg = vm::static_ptr_cast<u8>(_arg);
+		const u32 buf_addr = *vm::ptr<be_t<u32>>::make(arg.addr() + 0x28);
+		const u32 size = *vm::ptr<be_t<u32>>::make(arg.addr() + 0x30);
+
+		if (!buf_addr || size > 0x100000)
+		{
+			return CELL_EINVAL;
+		}
+
+		const u64 pos = dir->raw_pos.fetch_add(size);
+		sys_storage_fake_hdd_read(pos, vm::_ptr<u8>(buf_addr), size);
+
+		*vm::ptr<be_t<u64>>::make(arg.addr() + 0x18) = size;
+		return CELL_OK;
+	}
+
 	case 0x80000004: // Unknown
 	{
 		if (_size > 4)

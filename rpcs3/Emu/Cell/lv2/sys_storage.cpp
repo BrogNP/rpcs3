@@ -45,19 +45,86 @@ namespace
 		buf[off + 1] = static_cast<u8>(val);
 	}
 
-	// UFS2 superblock (struct fs) - only the fields needed for a minimal, self-consistent
-	// single-cylinder-group filesystem. fs_magic at offset 1372 is fixed regardless of layout.
+	// Geometry of the fake filesystem: one cylinder group, 16 MB, 2048 inodes. Only what the firmware fsck needs to see a coherent,
+	// clean-looking UFS2 (the real hdd0 content lives in the host directory and is never touched).
+	constexpr u32 FS_IPG          = 2048;
+	constexpr u32 FS_FPG          = 16384; // fragments (also fs_size)
+	constexpr u32 FS_INOPB        = FS_BSIZE / 256;
+	constexpr u32 SBLKNO_FRAG     = 32;
+	constexpr u32 CBLKNO_FRAG     = CG0_SECTOR / SECTORS_PER_FRAG; // 200
+	constexpr u32 IBLKNO_FRAG     = CBLKNO_FRAG + FS_FRAG; // 208
+	constexpr u32 DBLKNO_FRAG     = IBLKNO_FRAG + FS_IPG / FS_INOPB * FS_FRAG; // 720
+	constexpr u32 ROOT_DIR_FRAG   = DBLKNO_FRAG; // root directory: one fragment at the start of the data area
+	constexpr u32 CSUM_FRAG       = DBLKNO_FRAG + FS_FRAG; // cylinder group summary (fs_csaddr), one fragment
+	constexpr u32 ALT_SB_SECTOR   = SBLKNO_FRAG * SECTORS_PER_FRAG;
+	constexpr u32 INODE_SECTOR    = IBLKNO_FRAG * SECTORS_PER_FRAG; // inode 0/1; inode 2 (root) is in the next sector
+	constexpr u32 ROOT_DIR_SECTOR = ROOT_DIR_FRAG * SECTORS_PER_FRAG;
+	constexpr u32 CSUM_SECTOR     = CSUM_FRAG * SECTORS_PER_FRAG;
+
+	void write_be64(u8* buf, u32 off, u64 val)
+	{
+		write_be32(buf, off, static_cast<u32>(val >> 32));
+		write_be32(buf, off + 4, static_cast<u32>(val));
+	}
+
+	// Free space accounting shared by the superblock summary and cylinder group 0
+	constexpr u32 FS_NDIR   = 1;
+	constexpr u32 FS_NIFREE = FS_IPG - 3; // inodes 0, 1 (reserved) and 2 (root) used
+	constexpr u32 FS_NFFREE = 2 * (FS_FRAG - 1); // rest of the two partly used blocks
+	constexpr u32 FS_NBFREE = (FS_FPG - (CSUM_FRAG + FS_FRAG)) / FS_FRAG;
+	constexpr u32 FS_DSIZE  = FS_FPG - DBLKNO_FRAG;
+
+	// UFS2 superblock (struct fs, FreeBSD layout, big endian). fs_magic at offset 1372 is fixed regardless of layout.
 	void fake_ufs2_superblock(u8* buf)
 	{
-		const u32 cblkno_frags = CG0_SECTOR / SECTORS_PER_FRAG;
-		write_be32(buf, 8, 32);                            // fs_sblkno
-		write_be32(buf, 12, cblkno_frags);                 // fs_cblkno -> cgtod(fs,0) == CG0_SECTOR
-		write_be32(buf, 16, cblkno_frags + FS_FRAG);        // fs_iblkno
-		write_be32(buf, 20, cblkno_frags + FS_FRAG * 2);    // fs_dblkno
+		write_be32(buf, 8, SBLKNO_FRAG);                    // fs_sblkno
+		write_be32(buf, 12, CBLKNO_FRAG);                   // fs_cblkno -> cgtod(fs,0) == CG0_SECTOR
+		write_be32(buf, 16, IBLKNO_FRAG);                   // fs_iblkno
+		write_be32(buf, 20, DBLKNO_FRAG);                   // fs_dblkno
+		write_be32(buf, 36, FS_FPG);                        // fs_old_size
+		write_be32(buf, 40, FS_DSIZE);                      // fs_old_dsize
 		write_be32(buf, 44, 1);                             // fs_ncg
 		write_be32(buf, 48, FS_BSIZE);                      // fs_bsize
 		write_be32(buf, 52, FS_FSIZE);                      // fs_fsize
 		write_be32(buf, 56, FS_FRAG);                       // fs_frag
+		write_be32(buf, 60, 8);                             // fs_minfree
+		write_be32(buf, 72, ~(FS_BSIZE - 1));               // fs_bmask
+		write_be32(buf, 76, ~(FS_FSIZE - 1));               // fs_fmask
+		write_be32(buf, 80, 13);                            // fs_bshift
+		write_be32(buf, 84, 10);                            // fs_fshift
+		write_be32(buf, 88, 8);                             // fs_maxcontig
+		write_be32(buf, 92, FS_BSIZE / 4);                  // fs_maxbpg
+		write_be32(buf, 96, 3);                             // fs_fragshift
+		write_be32(buf, 100, 1);                            // fs_fsbtodb (log2(fsize / 512))
+		write_be32(buf, 104, 2048);                         // fs_sbsize
+		write_be32(buf, 116, FS_BSIZE / 8);                 // fs_nindir
+		write_be32(buf, 120, FS_INOPB);                     // fs_inopb
+		write_be32(buf, 128, 1);                            // fs_optim (FS_OPTSPACE)
+		write_be32(buf, 152, CSUM_FRAG);                    // fs_old_csaddr
+		write_be32(buf, 156, 1024);                         // fs_cssize
+		write_be32(buf, 160, FS_BSIZE);                     // fs_cgsize
+		write_be32(buf, 184, FS_IPG);                       // fs_ipg
+		write_be32(buf, 188, FS_FPG);                       // fs_fpg
+		buf[208] = 0;                                       // fs_fmod
+		buf[209] = 1;                                       // fs_clean
+		buf[210] = 0;                                       // fs_ronly
+		write_be32(buf, 872, FS_BSIZE);                     // fs_maxbsize
+		write_be64(buf, 1000, 65536);                       // fs_sblockloc
+		write_be64(buf, 1008, FS_NDIR);                     // fs_cstotal.cs_ndir
+		write_be64(buf, 1016, FS_NBFREE);                   // cs_nbfree
+		write_be64(buf, 1024, FS_NIFREE);                   // cs_nifree
+		write_be64(buf, 1032, FS_NFFREE);                   // cs_nffree
+		write_be64(buf, 1080, FS_FPG);                      // fs_size
+		write_be64(buf, 1088, FS_DSIZE);                    // fs_dsize
+		write_be64(buf, 1096, CSUM_FRAG);                   // fs_csaddr
+		write_be32(buf, 1196, 16384);                       // fs_avgfilesize
+		write_be32(buf, 1200, 64);                          // fs_avgfpdir
+		write_be32(buf, 1312, 2);                           // fs_flags = FS_DOSOFTDEP: the boot time "fsck -F" answers 5 (no background check possible) without it
+		write_be32(buf, 1320, 120);                         // fs_maxsymlinklen
+		write_be32(buf, 1324, 2);                           // fs_old_inodefmt (FS_44INODEFMT)
+		write_be64(buf, 1328, 0x7fffffffffffull);           // fs_maxfilesize
+		write_be64(buf, 1336, FS_BSIZE - 1);                // fs_qbmask
+		write_be64(buf, 1344, FS_FSIZE - 1);                // fs_qfmask
 		write_be32(buf, 1372, 0x19540119);                  // fs_magic (FS_UFS2_MAGIC)
 	}
 
@@ -93,11 +160,210 @@ namespace
 		write_be16(buf, 136, sum);
 	}
 
+	// Cylinder group 0 as a full block (struct cg + inode-used and fragment-free bitmaps), matching the superblock above
+	void fake_cylinder_group0_full(u8* buf)
+	{
+		constexpr u32 iusedoff = 168; // start of cg_space, as computed by the firmware fsck
+		constexpr u32 freeoff = iusedoff + FS_IPG / 8;
+		constexpr u32 nextfreeoff = freeoff + FS_FPG / 8;
+
+		write_be32(buf, 4, 0x00090255);                     // cg_magic
+		write_be32(buf, 12, 0);                             // cg_cgx
+		write_be32(buf, 20, FS_FPG);                        // cg_ndblk
+		write_be32(buf, 24, FS_NDIR);                       // cg_cs.cs_ndir
+		write_be32(buf, 28, FS_NBFREE);                     // cs_nbfree
+		write_be32(buf, 32, FS_NIFREE);                     // cs_nifree
+		write_be32(buf, 36, FS_NFFREE);                     // cs_nffree
+		write_be32(buf, 52 + 4 * (FS_FRAG - 1), 2);         // cg_frsum[7]: two runs of 7 free fragments
+		write_be32(buf, 92, iusedoff);                      // cg_iusedoff
+		write_be32(buf, 96, freeoff);                       // cg_freeoff
+		write_be32(buf, 100, nextfreeoff);                  // cg_nextfreeoff
+		write_be32(buf, 116, FS_IPG);                       // cg_niblk
+		write_be32(buf, 120, FS_IPG);                       // cg_initediblk
+
+		buf[iusedoff] = 0x07;                               // inodes 0, 1, 2 in use (LSB = lowest number)
+
+		// Fragment map: bit set = free. In use: the metadata area, the root directory fragment and the cs summary fragment
+		for (u32 frag = ROOT_DIR_FRAG + 1; frag < FS_FPG; frag++)
+		{
+			if (frag != CSUM_FRAG)
+			{
+				buf[freeoff + frag / 8] |= static_cast<u8>(1u << (frag % 8));
+			}
+		}
+	}
+
+	// UFS2 inode 2 (root directory), 256 bytes
+	void fake_root_inode(u8* buf)
+	{
+		write_be16(buf, 0, 040755);                         // di_mode
+		write_be16(buf, 2, 2);                              // di_nlink
+		write_be32(buf, 12, FS_BSIZE);                      // di_blksize
+		write_be64(buf, 16, 1024);                          // di_size (two directory blocks of 512 bytes)
+		write_be64(buf, 24, FS_FSIZE / 512);                // di_blocks (512 byte units)
+		for (u32 t = 32; t <= 56; t += 8)
+		{
+			write_be64(buf, t, 1262304000);                 // atime/mtime/ctime/birthtime
+		}
+		write_be64(buf, 112, ROOT_DIR_FRAG);                // di_db[0]
+	}
+
+	// Root directory fragment ("." and ".." in the first 512 byte block, empty second block)
+	void fake_root_dir(u8* buf)
+	{
+		write_be32(buf, 0, 2);                              // "." : d_ino
+		write_be16(buf, 4, 12);                             // d_reclen
+		buf[6] = 4;                                         // d_type = DT_DIR
+		buf[7] = 1;                                         // d_namlen
+		buf[8] = '.';
+
+		write_be32(buf, 12, 2);                             // ".."
+		write_be16(buf, 16, 500);
+		buf[18] = 4;
+		buf[19] = 2;
+		buf[20] = '.';
+		buf[21] = '.';
+
+		write_be16(buf, 512 + 4, 512);                      // second block: unused entry covering the block
+	}
+
 	// UFS2 cylinder group descriptor (struct cg) for cg 0 - only cg_magic is required to
 	// clear the specific check RPCS3's crash trace showed comparing against CG_MAGIC (0x90255).
 	void fake_cylinder_group0(u8* buf)
 	{
 		write_be32(buf, 4, 0x00090255); // cg_magic
+	}
+}
+
+void sys_storage_fake_hdd_read_generated(u64 offset, u8* buf, u64 size);
+
+// Raw reads of the (virtual) HDD device as done by the firmware fsck (fcntl ops 3/4 on the /dev_hdd0 directory handle).
+// There is no real UFS2 image behind dev_hdd0, so present the minimal structures the fsck validates: everything else reads as zeros.
+namespace
+{
+	// Sectors written by the firmware fsck ("repairs"); kept so later reads see them
+	shared_mutex g_fake_hdd_mutex;
+	std::map<u64, std::array<u8, 512>> g_fake_hdd_overlay;
+}
+
+void sys_storage_fake_hdd_write(u64 offset, const u8* buf, u64 size)
+{
+	std::lock_guard lock(g_fake_hdd_mutex);
+
+	for (u64 pos = offset; pos < offset + size;)
+	{
+		const u64 sector = pos / 512;
+		const u64 end = std::min((sector + 1) * 512, offset + size);
+
+		auto it = g_fake_hdd_overlay.find(sector);
+
+		if (it == g_fake_hdd_overlay.end())
+		{
+			// Start from the generated content so partial sector writes keep the rest
+			std::array<u8, 512> base{};
+			sys_storage_fake_hdd_read_generated(sector * 512, base.data(), 512);
+			it = g_fake_hdd_overlay.emplace(sector, base).first;
+		}
+
+		std::memcpy(it->second.data() + (pos - sector * 512), buf + (pos - offset), end - pos);
+
+		// There is nothing on this virtual disk that a repair could leave half done: the superblock (primary and the alternate copy)
+		// always stays marked clean, otherwise the firmware's boot time quick check keeps asking for another full fsck forever
+		for (const u64 sb_base : {u64{UFS2_SB_SECTOR} * 512, u64{ALT_SB_SECTOR} * 512})
+		{
+			const u64 clean_off = sb_base + 209; // fs_clean
+
+			if (clean_off / 512 == sector)
+			{
+				it->second[clean_off % 512] = 1;
+			}
+		}
+
+		pos = end;
+	}
+}
+
+void sys_storage_fake_hdd_read(u64 offset, u8* buf, u64 size)
+{
+	sys_storage_fake_hdd_read_generated(offset, buf, size);
+
+	std::lock_guard lock(g_fake_hdd_mutex);
+
+	for (u64 pos = offset; pos < offset + size;)
+	{
+		const u64 sector = pos / 512;
+		const u64 end = std::min((sector + 1) * 512, offset + size);
+
+		if (const auto it = g_fake_hdd_overlay.find(sector); it != g_fake_hdd_overlay.end())
+		{
+			std::memcpy(buf + (pos - offset), it->second.data() + (pos - sector * 512), end - pos);
+		}
+
+		pos = end;
+	}
+}
+
+void sys_storage_fake_hdd_read_generated(u64 offset, u8* buf, u64 size)
+{
+	std::memset(buf, 0, size);
+
+	const u64 first = offset / 512;
+	const u64 last = (offset + size + 511) / 512;
+
+	static const auto render = [](u32 sector, u8* out)
+	{
+		u8 blk[FS_BSIZE]{};
+
+		// Primary superblock (byte 65536) and the alternate copy fsck compares it with (fs_sblkno of cylinder group 0)
+		if (sector >= UFS2_SB_SECTOR && sector < UFS2_SB_SECTOR + FS_BSIZE / 512)
+		{
+			fake_ufs2_superblock(blk);
+			std::memcpy(out, blk + (sector - UFS2_SB_SECTOR) * 512, 512);
+		}
+		else if (sector >= ALT_SB_SECTOR && sector < ALT_SB_SECTOR + FS_BSIZE / 512)
+		{
+			fake_ufs2_superblock(blk);
+			std::memcpy(out, blk + (sector - ALT_SB_SECTOR) * 512, 512);
+		}
+		else if (sector >= CG0_SECTOR && sector < CG0_SECTOR + FS_BSIZE / 512)
+		{
+			fake_cylinder_group0_full(blk);
+			std::memcpy(out, blk + (sector - CG0_SECTOR) * 512, 512);
+		}
+		else if (sector == INODE_SECTOR + 1)
+		{
+			fake_root_inode(blk);
+			std::memcpy(out, blk, 512);
+		}
+		else if (sector == ROOT_DIR_SECTOR || sector == ROOT_DIR_SECTOR + 1)
+		{
+			fake_root_dir(blk);
+			std::memcpy(out, blk + (sector - ROOT_DIR_SECTOR) * 512, 512);
+		}
+		else if (sector == CSUM_SECTOR)
+		{
+			write_be32(blk, 0, FS_NDIR);
+			write_be32(blk, 4, FS_NBFREE);
+			write_be32(blk, 8, FS_NIFREE);
+			write_be32(blk, 12, FS_NFFREE);
+			std::memcpy(out, blk, 512);
+		}
+		else if (sector == DISKLABEL_SECTOR)
+		{
+			fake_disklabel(blk);
+			std::memcpy(out, blk, 512);
+		}
+	};
+
+	for (u64 sector = first; sector < last; sector++)
+	{
+		u8 tmp[512]{};
+		render(static_cast<u32>(sector), tmp);
+
+		const u64 sec_beg = sector * 512;
+		const u64 beg = std::max(sec_beg, offset);
+		const u64 end = std::min(sec_beg + 512, offset + size);
+		std::memcpy(buf + (beg - offset), tmp + (beg - sec_beg), end - beg);
 	}
 }
 
